@@ -12,7 +12,7 @@
 //               golden stays in the hand (the built-in equipped the merged golden on the copy, and its live loop over
 //               the target's items skipped the item after a merge)
 //   紧急调度券   a shop operator leaves its slot only when it was actually granted (built-in cleared the slot first)
-//   寻呼模块     the special refresh shows `refresh_cnt` DIFFERENT operators (fewer when the pool has no more)
+//   寻呼模块     the special refresh shows `refresh_cnt` DIFFERENT eligible operators
 //   教鞭       trap_create_self_choice {choice_event: hunter_band_1, choiceType PERSONAL_CHOOSE}: a personal choice of
 //               one of THREE 战术特训 cards (choices.json cards.bounty payout `perfect`, e.g. 战术特训·飞行I "若各自行动阶段就
 //               达成完美作战，获得1资金") whose enemy the mode can field — PRTS 卫戍协议：盟约 下半/PRTS盟约记录 §法术 教鞭
@@ -98,7 +98,7 @@ export function registerMeta(registry) {
       const shares = (id) => { const c = ctx.gd.chess(id); return !!(c && Array.isArray(c.bonds) && c.bonds.some((b) => bonds.has(b))); };
       const ids = [];
       for (let k = 0; k < n; k++) {
-        // never the same operator twice (user playtest #6 item 19): fewer cards when the pool has no other one
+        // Never the same operator twice: fewer cards when there are fewer eligible identities.
         const id = ctx.rollChess({ maxTier, filter: (x) => shares(x) && !ids.includes(x) });
         if (id) ids.push(id);
       }
@@ -143,7 +143,7 @@ export function registerMeta(registry) {
       // item merge detaches the original's copy from `target.items` while we iterate (the built-in's live loop then
       // skipped the next item)
       const itemIds = (target.items || []).map((it) => it.id);
-      const copy = ctx.grantChess(target.id, { requirePool: false, source: 'item:chess_item_6_02_m' });
+      const copy = ctx.grantChess(target.id, { source: 'item:chess_item_6_02_m' });
       if (!copy) { ev.error = 'HAND_FULL'; return; }
       for (const itemId of itemIds) ctx.grantItem(itemId, { source: 'item:chess_item_6_02_m' });
     },

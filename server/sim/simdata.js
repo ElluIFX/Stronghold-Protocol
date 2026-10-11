@@ -44,6 +44,7 @@ import { atPotential, isPotential, POTENTIAL_DEFAULT, cultivateMul } from '../..
 import { standInRecord } from '../../shared/standIn.js';
 import { diyRecordOf, diyTokenOwner } from '../../shared/diy.js';
 import { normHitArea } from './body.js';
+import { operatorBalanceFile } from '../../shared/operatorBalance.js';
 
 // ---------------------------------------------------------------------------------------------------------------
 // generic helpers
@@ -559,12 +560,12 @@ export function freezeDef(d) {
 export class DataSource {
   constructor(raw = {}, fallback = null) {
     this.raw = {
-      chess: asMap(unwrap(raw.chess, 'chess'), 'chessId') ?? {},
+      chess: operatorBalanceFile('chess', asMap(unwrap(raw.chess, 'chess'), 'chessId') ?? {}),
       enemies: asMap(unwrap(raw.enemies, 'enemies'), 'key') ?? {},
       tokens: asMap(unwrap(raw.tokens, 'tokens'), 'tokenId') ?? {},
       stages: asMap(unwrap(raw.stages, 'stages'), 'id') ?? {},
       waves: asMap(unwrap(raw.waves, 'waves'), 'id') ?? {},
-      backups: raw.backups && typeof raw.backups === 'object' && raw.backups.units ? raw.backups : null,
+      backups: raw.backups && typeof raw.backups === 'object' && raw.backups.units ? operatorBalanceFile('backups', raw.backups) : null,
       effects: raw.effects && typeof raw.effects === 'object' ? raw.effects : null,
     };
     this.fallback = fallback;

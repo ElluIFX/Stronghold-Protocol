@@ -6,7 +6,7 @@
 //   pool     cap = gd.poolCopies(base, seats) (5–8 seats scale it, remake extension); raw balance ≤ cap and raw balance +
 //            Σ copies held by pieces == cap (public availability is clamped at zero) per base chess; no 自选 slot in the
 //            shared pool; non-pool chess hold 0 copies;
-//            every capped shop item is held by at most its cap (normal occupies 1, upgraded 2; effect-only items have no cap)
+//            purchased copies retained by each capped item stay within its cap; effect grants occupy no stock
 //            a player's 自选 stock (0.2.0, player/diy.js) the same against its own pieces of each slotted slot — a DIY
 //            piece is always a slotted slot of its owner's, and a DIY shop / reward card one of its stocked slots
 //   economy  funds / pendingFunds non-negative integers, LP finite, shop level in range, prices ≥ 0
@@ -47,6 +47,9 @@ export function collectViolations(m, { limit = 25 } = {}) {
     if (!Number.isInteger(p.uid) || p.uid <= 0) fail(`${ps.playerId}: bad uid ${p.uid}`);
     else if (uids.has(p.uid)) fail(`${ps.playerId}: duplicate uid ${p.uid}`);
     uids.add(p.uid);
+    if (p.kind === 'item' && (!Number.isInteger(p.poolCopies) || p.poolCopies < 0 || p.poolCopies > m.itemPool.need(p.id))) {
+      fail(`${ps.playerId}: item ${p.id} has invalid purchased copies ${p.poolCopies}`);
+    }
   };
 
   if (!PHASES.has(m.phase)) fail(`unknown phase ${m.phase}`);
@@ -208,7 +211,7 @@ export function collectViolations(m, { limit = 25 } = {}) {
   }
   for (const [base, n] of held) if (!m.pool.has(base) && n !== 0) fail(`non-pool chess ${base} holds ${n} copies`);
 
-  // Shared shop equipment. The chess pool above may go negative (Mimic). Item stock may not: held ≤ cap.
+  // Shared purchase stock counts only purchased copies retained by items, including merged and upgraded items.
   if (m.itemPool && gd.raw.items) {
     for (const [id, rec] of Object.entries(gd.raw.items)) {
       if (!rec || rec.isGolden) continue;

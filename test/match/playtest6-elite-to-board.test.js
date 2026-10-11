@@ -492,7 +492,7 @@ test('a deployed copy on a tile its elite may not use (terrain changed, not re-c
       // never lost: it stays on the first deployed copy's tile, like a piece the eviction finds no room for
       assert.equal(loc.area, 'board', `${label}: kept on the board`);
       assert.equal(loc.key, mergeTile(tiles.map((key) => ({ key }))).key);
-      assert.equal(elite.poolCopies, 3);
+      assert.equal(elite.poolCopies, 2);
     }
     m.dispose();
   }

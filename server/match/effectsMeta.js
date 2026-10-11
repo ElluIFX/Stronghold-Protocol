@@ -545,12 +545,7 @@ export function makeCtx(m, ps, source, hook, ev = null) {
       let id = chessId;
       if (opts.golden) id = gd.goldenIdOf(chessId) || chessId;
       if (!gd.chess(id)) return null;
-      const base = gd.baseIdOf(id);
-      // "some effects fail when the cap is hit" (research 06 §7): by default a chess of the pool needs a free copy (a
-      // 自选 piece: one of the player's own stock — player/diy.js poolOf)
-      const pool = typeof ps.poolOf === 'function' ? ps.poolOf(base) : m.pool;
-      if (opts.requirePool !== false && pool.has(base) && pool.left(base) < 1) return null;
-      const p = ps.acquireChess(id, { source: opts.source || source.key || 'effect', toTemp: !!opts.toTemp, fromPool: opts.fromPool !== false });
+      const p = ps.acquireChess(id, { source: opts.source || source.key || 'effect', toTemp: !!opts.toTemp, fromPool: false });
       // 「歌蕾蒂娅：获得斯卡蒂」 — every silent grantChess (a 特质, 余 SERVER_MOST_BOND, a band, an item, a choice).
       // opts.toast === false skips it. A caller that already says the same thing should pass that.
       if (p && opts.toast !== false) {
@@ -573,7 +568,7 @@ export function makeCtx(m, ps, source, hook, ev = null) {
       return p ? view(p) : null;
     },
     /**
-     * Random chess id from the shared pool (copy-weighted) — and the player's own 自选 stock (player/diy.js
+     * Copy-weighted chess grant from the match's eligible operators and the player's own 自选 roster (player/diy.js
      * diyStockEntries, 0.2.0: 「自选干员放入后模拟中的补给池随机范围也将被相应扩大」). opts: { maxTier, tier, bond, filter(id) };
      * bonds are read through the player's data view (a slotted slot: its operator's).
      */
@@ -582,18 +577,18 @@ export function makeCtx(m, ps, source, hook, ev = null) {
         if (opts.bond) { const c = gd.chess(id); if (!c || !Array.isArray(c.bonds) || !c.bonds.includes(opts.bond)) return false; }
         return typeof opts.filter === 'function' ? !!opts.filter(id) : true;
       };
-      const extra = typeof ps.diyStockEntries === 'function' ? ps.diyStockEntries() : null;
-      return m.pool.roll(m.rngMeta, { maxTier: Number.isInteger(opts.maxTier) ? opts.maxTier : 6, tier: Number.isInteger(opts.tier) ? opts.tier : null, filter: f, extra, ignoreCounts: opts.ignoreCounts === true });
+      const extra = typeof ps.diyStockEntries === 'function' ? ps.diyStockEntries({ ignoreStock: true }) : null;
+      return m.pool.roll(m.rngMeta, { maxTier: Number.isInteger(opts.maxTier) ? opts.maxTier : 6, tier: Number.isInteger(opts.tier) ? opts.tier : null, filter: f, extra, ignoreStock: true, ignoreCounts: opts.ignoreCounts === true });
     },
     rollItem: (opts = {}) => m.rollItemId(opts),
     /**
      * Roll a choices.json pool: equip pools → { kind: 'item', id }; chess pools (items / weighted / shopEligible with
-     * tier, minTier, bond, golden) → { kind: 'chess', id, golden } (a pool chess needs a free copy). null when empty.
+     * tier, minTier, bond, golden) → { kind: 'chess', id, golden }. null when no eligible operator exists.
      */
     rollPool: (poolId, opts = {}) => m.rollPool(poolId, {
       shopLevel: ps.shop.level,
-      // a shared-pool draw also takes the player's 自选 stock, its bonds read through the player's view (rollChess)
-      extra: typeof ps.diyStockEntries === 'function' ? ps.diyStockEntries() : null, chessOf: (id) => gd.chess(id),
+      // Grant candidates include the player's 自选 roster; bonds read through the player's view (rollChess).
+      extra: typeof ps.diyStockEntries === 'function' ? ps.diyStockEntries({ ignoreStock: true }) : null, chessOf: (id) => gd.chess(id),
       ...opts,
     }),
     /**

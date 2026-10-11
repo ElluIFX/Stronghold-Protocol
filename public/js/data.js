@@ -30,6 +30,7 @@
 import { useEffect, useReducer } from '../vendor/hooks.module.js';
 import { applyFileOverlay } from '../../shared/i18nData.js';
 import { canonicalLang } from '../../shared/i18nPacks.js';
+import { operatorBalanceFile } from '../../shared/operatorBalance.js';
 
 /** Known data files (name → URL basename). Unknown names are allowed too (`/data/<name>.json`). */
 export const DATA_FILES = Object.freeze({
@@ -202,7 +203,7 @@ export function createDataStore(opts = {}) {
       let toldMissing = false;
       for (let attempt = 0; ; attempt++) {
         try {
-          entry.value = await readJson(name);
+          entry.value = operatorBalanceFile(name, await readJson(name));
           entry.status = 'ready';
           break;
         } catch (err) {

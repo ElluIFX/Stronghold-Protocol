@@ -342,7 +342,8 @@ test('strategy draft: 20 s turns above 4 seats (m.public turnSeconds too), 30 s 
     h.run(() => m.phase !== PHASE.BAND_DRAFT, { maxTime: 20 * secs * 1000 });
     const humansLeft = m.order.filter((p) => !p.isBot).length;
     assert.ok(h.sched.now() - s0 <= humansLeft * secs * 1000 + 50, `${humansLeft} turns of ${secs} s`);
-    assert.equal(new Set([...m.players.values()].map((p) => p.bandId)).size, humans + bots, 'distinct strategies');
+    assert.equal(Object.keys(m.draft.picks).length, humans + bots, 'every seat receives one strategy');
+    assert.ok(m.order.filter((p) => !p.isBot).every((p) => p.bandId === m.gd.bandDraft.timeoutBandId), 'each idle human receives the configured default');
     assert.deepEqual(audit.violations, [], audit.violations.join('\n'));
     m.dispose();
   }
@@ -413,8 +414,7 @@ test('titles above 4 players: the one-each pass as before, then each untitled pl
 test('audited FakeBattle matches of 5, 6, 7 and 8 players (all phases incl. multi-field 联防, 机变, Final Assault) report no violations', () => {
   for (const [humans, bots, seed] of [[1, 4, 940], [2, 4, 941], [1, 6, 942], [3, 5, 943]]) {
     const n = humans + bots;
-    // every round the seats with (seat + round) % 4 = 0 leak 1–3 enemies (1–2 leakers, the other 3–6 perfect: with more
-    // than 4 alive that is 2 联防 fields), and one enemy of each 联防 field's first leaker survives there (a bill)
+    // Original leaks enter stage one; one survivor continues through each available helper group.
     let h = null;
     const script = (b) => {
       if (b.kind === 'normal') {
@@ -439,8 +439,8 @@ test('audited FakeBattle matches of 5, 6, 7 and 8 players (all phases incl. mult
     const multiRounds = new Set(unite.filter((b) => b.fieldId === 'u2').map((b) => b.round));
     assert.ok(uniteRounds.size >= 3, `${n} players: 联防 in ${uniteRounds.size} rounds`);
     assert.ok(multiRounds.size >= 3, `${n} players: a multi-field 联防 in ${multiRounds.size} rounds`);
-    assert.ok(unite.every((b) => b.fieldId !== 'u2' || unite.some((u) => u.fieldId === 'u' && u.round === b.round)), 'u2 only beside u');
-    assert.ok(unite.some((b) => b.fieldId === 'u' && b.spawns.length) && unite.some((b) => b.fieldId === 'u2' && b.spawns.length), `${n} players: leakers on both fields`);
+    assert.ok(unite.every((b) => b.fieldId !== 'u2' || unite.some((u) => u.fieldId === 'u' && u.round === b.round && u.finished)), 'stage two follows a completed first stage');
+    assert.ok(unite.some((b) => b.fieldId === 'u' && b.spawns.length) && unite.some((b) => b.fieldId === 'u2' && b.spawns.length === 1), `${n} players: first-stage survivors enter stage two`);
     checkInvariants(h.m);
     h.m.dispose();
   }

@@ -74,7 +74,7 @@ function diyMatch(extra = {}) {
   return makeMatch({ mode: 'coop', seats, seed: 11, ...extra });
 }
 /** Gain a chess the way the shop does (acquireChess: the player's copy accounting, merges). */
-const gain = (ps, id) => ps.acquireChess(id, { source: 'buy' });
+const gain = (ps, id) => ps.acquireChess(id, { source: 'buy', fromPool: true });
 function clear(ps) {
   for (const p of [...ps.board.values()]) ps.returnCopies(p);
   ps.board.clear();

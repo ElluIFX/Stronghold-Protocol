@@ -7,11 +7,11 @@
 //     seats has ceil(cap × seats / 4) of that, gamedata.js poolCopies — a remake extension —, sized once at match
 //     start: an eliminated seat's copies just return). `left` is the signed capacity minus occupation; the public
 //     left() and shop sampling clamp a deficit to zero.
-//   * Owning a piece takes copies: a normal piece holds 1, an elite holds 3 (merge of 3 normals). Shop displays
-//     do NOT reserve copies; buying fails (SOLD_OUT) when left = 0.
+//   * Purchases take copies: a normal piece holds 1, an elite purchase holds 3. Grants hold 0; merges and effect
+//     promotions preserve their purchased copies. Shop displays reserve nothing; buying fails when stock is exhausted.
 //   * Pieces remember how many copies they hold (`piece.poolCopies`), so selling / elimination / temp wipes return
-//     exactly what was taken — chess granted by effects while the pool is empty (or hidden/banned chess) hold 0.
-//   * Invariant: raw left ≤ cap and raw left + Σ held copies == cap. Mimic can exceed stock, but its copies still occupy it.
+//     exactly what was taken. Effect-granted chess never occupy purchase stock.
+//   * Invariant: raw left ≤ cap and raw left + Σ held copies == cap.
 //
 // Rolls: each chess slot draws ONE copy uniformly from all remaining copies of eligible chess with tier ≤ shop level
 // ("copy-weighted"; duplicates within a roll allowed). The item slot picks a tier with the same tier shares, then a
@@ -100,14 +100,16 @@ export class SharedPool {
    * Remaining copies of eligible chess (tier ≤ maxTier, or exactly `tier`): the pool's entries, then `extra` ([id, entry]
    * pairs of the same shape — a player's 自选 stock) under the same filters.
    */
-  _eligible({ maxTier = 6, tier = null, filter = null, extra = null, ignoreCounts = false } = {}) {
+  _eligible({ maxTier = 6, tier = null, filter = null, extra = null, ignoreCounts = false, ignoreStock = false, weight = null } = {}) {
     const out = [];
     const scan = (list) => {
       for (const [id, e] of list) {
-        if (!ignoreCounts && e.left <= 0) continue;
+        if (!ignoreCounts && !ignoreStock && e.left <= 0) continue;
         if (tier != null ? e.tier !== tier : e.tier > maxTier) continue;
         if (filter && !filter(id, e)) continue;
-        out.push([id, ignoreCounts ? 1 : e.left]);
+        const copies = ignoreCounts ? 1 : ignoreStock ? e.cap : e.left;
+        const n = weight ? weight(id, copies) : copies;
+        if (Number.isFinite(n) && n > 0) out.push([id, n]);
       }
     };
     scan(this.entries);
@@ -119,7 +121,8 @@ export class SharedPool {
    * Copy-weighted roll: one copy uniformly among remaining copies of eligible chess. Returns a base id or null.
    * @param {Function} rng
    * @param {{ maxTier?: number, tier?: number|null, filter?: (id: string, e: object) => boolean,
-   *   extra?: Iterable<[string, { left: number, tier: number }]>|null }} [opts]
+   *   extra?: Iterable<[string, { left: number, tier: number }]>|null,
+   *   weight?: (id: string, copies: number) => number }} [opts]
    */
   roll(rng, opts = {}) {
     const el = this._eligible(opts);
@@ -185,8 +188,8 @@ export class SharedPool {
   }
 }
 
-/** Shared equipment stock, derived from actual ownership. Merges, equips and returns cannot lose a reservation:
- * normal equipment occupies one, upgraded equipment two. Shop/choice displays reserve nothing. Source: the original
+/** Shared purchase stock, derived from the purchased copies each item retains. Merges, equips and returns preserve
+ * occupancy; effect grants occupy zero copies. Shop/choice displays reserve nothing. Source: the original
  * experiment BV1eLXXBqEgF, 1:30 and 2:30. [ASSUMED] An item that is consumed/destroyed or removed by elimination no
  * longer occupies stock, consistently with the video's ownership model; this is not a per-match purchase limit. */
 export class SharedItemPool {
@@ -199,8 +202,8 @@ export class SharedItemPool {
     let count = 0;
     const see = p => {
       if (!p) return;
-      if (p.kind === 'item' && this.gd.baseIdOf(p.id) === base) count += this.need(p.id);
-      for (const item of p.items || []) if (this.gd.baseIdOf(item.id) === base) count += this.need(item.id);
+      if (p.kind === 'item' && this.gd.baseIdOf(p.id) === base) count += p.poolCopies;
+      for (const item of p.items || []) if (this.gd.baseIdOf(item.id) === base) count += item.poolCopies;
     };
     for (const ps of this.players()) {
       for (const p of ps.hand) see(p);

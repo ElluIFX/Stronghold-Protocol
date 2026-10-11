@@ -38,13 +38,10 @@
 // the rules above — one field 'u', ≤ maxHelpers (2) helpers, every leaker's enemies on it. Above 4 alive, with
 // k = ⌈alive / 4⌉ (uniteFieldBudget): helpers = the top maxHelpers·k perfect players by the selection ranking above,
 // assigned maxHelpers per field in that order (uniteHelperGroups; within a field the pair order, sides, template and
-// colOffsets work as above), with k first capped by the number of leakers (uniteFieldCount), so the field count =
-// min(k, leakers, ⌈helpers / 2⌉) — never a field without a helper or without a leaker. Field ids
-// 'u', then 'u2', 'u3', … (uniteFieldId; seeds `u:<round>`, `u2:<round>`, …). The leakers are spread over the fields
-// balancing their counted leaks (largest leaker first, to the field with the fewest so far — the lowest field on a tie —
-// leakers of equal leaks by seat; every leaker has ≥ 1 counted leak, so each field gets one). Each field is a normal
-// 联防 battle with only its own leakers' enemies; settlement bills each leaker from its own field's result (uniteBills: a
-// field that could not run charges its leakers' own leaks, as without a 联防).
+// colOffsets work as above). Field ids are 'u', then 'u2', 'u3', … (uniteFieldId; seeds `u:<round>`, `u2:<round>`, …).
+// All original leaks enter the first field. Only its counted survivors and unspawned enemies enter the next field,
+// retaining source attribution and modifiers. Stages run sequentially; a cleared stage ends 联防 immediately.
+// Settlement bills each original leaker from the last stage that ran. A synthetic stage preserves its incoming count.
 // A plan: `{ helpers, leakers, leaked, notReentered, groups }` — the union over every field (helpers in field order,
 // leakers and leaks in seat order, as with one field) plus `groups: [{ fieldId, helpers, leakers, leaked, notReentered }]`
 // in field order (one field: its group shares the plan's own arrays).
@@ -68,12 +65,11 @@ export function uniteFieldBudget(gd, alive) {
 }
 
 /**
- * How many 联防 fields a round asks for: uniteFieldBudget capped by the number of leakers, so every field fights some
- * leaker's enemies (1 leaker → one field, the official layout). Always 1 up to 4 alive.
+ * How many sequential 联防 stages a round can use when it has leaks. Always 1 up to 4 alive.
  * @param {import('./gamedata.js').GameData} gd
  */
 export function uniteFieldCount(gd, alive, leakers) {
-  return Math.max(1, Math.min(uniteFieldBudget(gd, alive), Math.floor(Number(leakers)) || 0));
+  return leakers > 0 ? uniteFieldBudget(gd, alive) : 1;
 }
 
 /**
@@ -91,7 +87,7 @@ export function uniteGroups(plan) {
 export function uniteGroupOf(plan, playerId) {
   const groups = uniteGroups(plan);
   const has = (list) => (list || []).some((p) => p && p.playerId === playerId);
-  return groups.find((g) => has(g.helpers)) || groups.find((g) => has(g.leakers)) || null;
+  return groups.find((g) => has(g.helpers)) || (has(plan.leakers) ? groups[plan.activeGroup || 0] : null) || null;
 }
 
 /**
@@ -101,38 +97,38 @@ export function uniteGroupOf(plan, playerId) {
  */
 export function uniteFieldResults(plan, uniteResult) {
   const groups = uniteGroups(plan);
-  const list = Array.isArray(uniteResult) ? uniteResult : null;
-  if (groups.length <= 1) return groups.map((group) => ({ group, result: (list ? list[0] : uniteResult) || null }));
-  return groups.map((group, i) => ({ group, result: (list && list[i]) || null }));
+  const list = Array.isArray(uniteResult) ? uniteResult : [uniteResult];
+  return groups.slice(0, list.length).map((group, i) => ({ group, result: list[i] || null }));
 }
 
 /**
- * What settlement bills each leaker after the 联防: playerId → its enemies that survived on its own field (uncapped:
- * uniteSurvivors of that field's result), or null when its field's battle could not run (no result / a synthetic one —
- * settle() then charges the leaker's own counted leaks, as without a 联防).
+ * Final survivors by original source player. A synthetic final stage preserves the incoming survivors.
  * @returns {Map<string, number|null>}
  */
 export function uniteBills(plan, uniteResult) {
   const out = new Map();
   if (!plan) return out;
-  for (const { group, result } of uniteFieldResults(plan, uniteResult)) {
-    const ran = !!(result && !result.synthetic);
-    const survivors = ran ? uniteSurvivors(group, result) : null;
-    for (const ps of group.leakers || []) out.set(ps.playerId, ran ? survivors.get(ps.playerId) || 0 : null);
+  const results = Array.isArray(uniteResult) ? uniteResult : [uniteResult];
+  const index = Math.max(0, results.length - 1);
+  const group = uniteGroups(plan)[index];
+  const result = results[index];
+  const survivors = result && !result.synthetic ? uniteSurvivors(group, result) : null;
+  for (const ps of plan.leakers || []) {
+    const incoming = group.leaked.filter(l => l.sourcePlayerId === ps.playerId).length + (group.notReentered.get(ps.playerId) || 0);
+    out.set(ps.playerId, survivors ? survivors.get(ps.playerId) || 0 : incoming);
   }
   return out;
 }
 
 /**
- * The 联防 result a player's settlement reads (bounty coins, kills and damage of a helper; onBattleResult `unite`): one
- * field → that field's result; several → the player's own field's (helper or leaker), else the first field's.
+ * A helper reads its own stage's statistics; other players read the final stage that ran.
  */
 export function uniteResultFor(plan, uniteResult, playerId) {
   if (!Array.isArray(uniteResult)) return uniteResult || null;
   const fr = uniteFieldResults(plan, uniteResult);
-  const g = uniteGroupOf(plan, playerId);
-  const own = g ? fr.find((x) => x.group.fieldId === g.fieldId) : null;
-  return (own ? own.result : fr.length ? fr[0].result : null) || null;
+  const own = fr.find(x => x.group.helpers.some(p => p.playerId === playerId));
+  const last = uniteResult[uniteResult.length - 1];
+  return (own ? own.result : last) || null;
 }
 
 /**
@@ -145,13 +141,11 @@ export function planUnite(m, results) {
   const alive = m.alivePlayers();
   const leakers = [];
   const perfects = [];
-  /** leaker → its counted leaks (the field balance) */
-  const countedOf = new Map();
   for (const ps of alive) {
     const r = results.get(ps.playerId);
     if (!r) continue;
     const counted = (r.leaked || []).filter((l) => l && l.counted !== false);
-    if (counted.length > 0) { leakers.push(ps); countedOf.set(ps, counted.length); }
+    if (counted.length > 0) leakers.push(ps);
     else if (r.perfect !== false) perfects.push(ps);
   }
   if (!leakers.length || !perfects.length) return null;
@@ -159,15 +153,11 @@ export function planUnite(m, results) {
   const helpers = helperGroups.length === 1 ? helperGroups[0] : helperGroups.flat();
   const leaked = [];
   const notReentered = new Map();
-  /** leaker → its re-entering leaks and how many of its counted leaks cannot re-enter */
-  const own = new Map();
   for (const ps of leakers) {
     const r = results.get(ps.playerId);
-    const mine = { leaked: [], skipped: 0 };
-    own.set(ps, mine);
     for (const l of r.leaked || []) {
       if (!l || l.counted === false) continue;
-      if (!m.gd.enemy(l.enemyKey)) { notReentered.set(ps.playerId, (notReentered.get(ps.playerId) || 0) + 1); mine.skipped++; continue; }
+      if (!m.gd.enemy(l.enemyKey)) { notReentered.set(ps.playerId, (notReentered.get(ps.playerId) || 0) + 1); continue; }
       // kill bounties keep paying in 联防, and only on the card's own enemy. A split or summoned child
       // never carries bountyId / bountyCoins (spawnChildren). A leak that still has the card's id but is
       // some other enemy — a copy that did not go through spawnChildren — does not collect the card either
@@ -182,41 +172,47 @@ export function planUnite(m, results) {
       if (!bounty && extra > 0) bounty = { coins: extra, ownerPlayerId: ps.playerId };
       const entry = { enemyKey: l.enemyKey, mods: l.mods ? { ...l.mods } : null, lpr: l.lpr ?? 1, sourcePlayerId: ps.playerId, tag: l.tag ?? null, bounty };
       leaked.push(entry);
-      mine.leaked.push(entry);
     }
   }
-  if (helperGroups.length === 1) return { helpers, leakers, leaked, notReentered, groups: [{ fieldId: uniteFieldId(0), helpers, leakers, leaked, notReentered }] };
-  const slot = assignLeakers(helperGroups.length, leakers, (ps) => countedOf.get(ps) || 0);
-  const groups = helperGroups.map((hs, i) => {
-    const ls = leakers.filter((ps) => slot.get(ps) === i);
-    const gl = [];
-    const gn = new Map();
-    for (const ps of ls) {
-      const mine = own.get(ps);
-      for (const e of mine.leaked) gl.push(e);
-      if (mine.skipped > 0) gn.set(ps.playerId, mine.skipped);
-    }
-    return { fieldId: uniteFieldId(i), helpers: hs, leakers: ls, leaked: gl, notReentered: gn };
-  });
-  return { helpers, leakers, leaked, notReentered, groups };
+  const groups = helperGroups.map((hs, i) => ({
+    fieldId: uniteFieldId(i), helpers: hs, leakers,
+    leaked: i === 0 ? leaked : [], notReentered: i === 0 ? notReentered : new Map(),
+  }));
+  return { helpers, leakers, leaked, notReentered, groups, activeGroup: 0, results: [] };
 }
 
-/**
- * Leakers onto `fields` 联防 fields, balancing the counted leaks: the largest leaker first (equal leaks: lower seat
- * first) goes to the field with the fewest counted leaks so far (a tie: the lowest field index).
- * @returns {Map<any, number>} leaker → field index
- */
-export function assignLeakers(fields, leakers, countOf) {
-  const load = Array.from({ length: Math.max(1, fields) }, () => 0);
-  const out = new Map();
-  const order = leakers.slice().sort((a, b) => countOf(b) - countOf(a) || a.seat - b.seat);
-  for (const ps of order) {
-    let best = 0;
-    for (let i = 1; i < load.length; i++) if (load[i] < load[best]) best = i;
-    out.set(ps, best);
-    load[best] += countOf(ps);
+/** Record a completed stage and forward its survivors to the next helper group. */
+export function advanceUniteGroup(plan, result, spawns = []) {
+  const groups = uniteGroups(plan);
+  const index = plan.activeGroup || 0;
+  const current = groups[index];
+  if (!plan.results) plan.results = [];
+  plan.results[index] = result;
+  const next = groups[index + 1];
+  if (!next) return null;
+  const outgoing = [];
+  if (!result || result.synthetic) outgoing.push(...current.leaked);
+  else {
+    for (const pp of Object.values(result.perPlayer || {})) {
+      for (const leak of pp.leaked || []) {
+        if (!leak || leak.counted === false || !leak.sourcePlayerId) continue;
+        const original = current.leaked.find(l => l.enemyKey === leak.enemyKey && l.sourcePlayerId === leak.sourcePlayerId
+          && l.mods?.bountyId === leak.mods?.bountyId && l.mods?.bountyCoins === leak.mods?.bountyCoins);
+        outgoing.push({ ...leak, mods: leak.mods ? { ...leak.mods } : null, bounty: original?.bounty || null });
+      }
+    }
+    const unused = spawns.slice();
+    for (const pending of result.unspawned || []) {
+      const at = unused.findIndex(s => s.enemyKey === pending.enemyKey && s.sourcePlayerId === pending.sourcePlayerId && (pending.time == null || s.time === pending.time));
+      const spec = at >= 0 ? unused.splice(at, 1)[0] : pending;
+      outgoing.push({ ...spec, sourcePlayerId: pending.sourcePlayerId, mods: spec.mods ? { ...spec.mods } : null });
+    }
   }
-  return out;
+  if (!outgoing.length) return null;
+  next.leaked = outgoing;
+  next.notReentered = new Map(current.notReentered);
+  plan.activeGroup = index + 1;
+  return next;
 }
 
 /**
@@ -319,8 +315,7 @@ export function uniteBattleOpts(m, plan, timeLimit) {
 
 /**
  * LP loss per leaker after the unite battle: survivors by source (+ unspawned re-entries + not re-entered leaks),
- * capped per round. `plan`: a one-field plan or one field's group (with several fields, each field's result bills only
- * its own leakers — uniteBills).
+ * capped per round. `plan`: the current stage's incoming enemies and unresolved source counts.
  * @returns {Map<string, number>} playerId → survivors (uncapped)
  */
 export function uniteSurvivors(plan, uniteResult) {

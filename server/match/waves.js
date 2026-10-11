@@ -616,7 +616,7 @@ export function previewOf(spawns) {
  * @param {number} helperCount 1 | 2 (the field's helpers)
  * @returns {{ templateId: string|null, spawns: object[], routes: object[] }}
  */
-export function buildUniteWave(gd, leaked, helperCount, timeLimit) { // eslint-disable-line no-unused-vars
+export function buildUniteWave(gd, leaked, helperCount, timeLimit) {
   const templates = gd.unite.templates;
   const templateId = templates[String(helperCount)] || templates[helperCount] || null;
   const tpl = templateId ? gd.wave(templateId) : null;
@@ -671,5 +671,15 @@ export function buildUniteWave(gd, leaked, helperCount, timeLimit) { // eslint-d
     }
   }
   spawns.sort((a, b) => a.time - b.time);
+  const limit = Number.isFinite(timeLimit) && timeLimit > 0 ? timeLimit : 60;
+  const budget = limit * 0.6;
+  const first = spawns[0]?.time ?? 0;
+  const last = spawns[spawns.length - 1]?.time ?? 0;
+  if (last > budget) {
+    const preserveFirst = first < budget;
+    const factor = preserveFirst ? (budget - first) / (last - first) : budget / last;
+    for (const spawn of spawns) spawn.time = Math.min(budget, preserveFirst ? first + (spawn.time - first) * factor : spawn.time * factor);
+    spawns[spawns.length - 1].time = budget;
+  }
   return { templateId, spawns, routes };
 }

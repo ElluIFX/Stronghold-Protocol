@@ -24,7 +24,8 @@ test('matches: the 自选 match\'s human seat draws its 自选 pieces in its sho
   for (const [r, , f] of dg.diy.rounds) {
     for (const x of f ? f.split(' ') : []) {
       const [slot, charId] = x.split('→');
-      assert.equal(dg.diy.picks[`chess_char_${slot}`].charId, charId, `round ${r}: ${x} fights as its pick`);
+      const baseSlot = slot.replace(/_b$/, '_a');
+      assert.equal(dg.diy.picks[`chess_char_${baseSlot}`].charId, charId, `round ${r}: ${x} fights as its pick`);
     }
   }
   // the stock: never above its cap (8 at tier 5, 5 at tier 6)

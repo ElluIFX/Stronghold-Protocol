@@ -20,9 +20,9 @@
 //     avoid). A piece all of whose bonds are switched off this match (本局禁用: the drawn bans and the mode's static list)
 //     gets no stock and so leaves the shop, like a preset chess whose bonds are all off (PRTS 卫戍协议：盟约 "禁用盟约有可能
 //     影响自选的支援干员"); 协防 (emptyShip) is never banned, so a prototype always stays. poolOf(baseId) routes every copy
-//     taken or returned for a slotted slot to that stock (buy, reward picks, merges, promotions, sells, temp, elimination).
+//     purchased or returned for a slotted slot to that stock; gifts occupy zero and merges preserve purchased copies.
 //   * the shop's draws (diyRollEntries): the stock of each slotted slot joins this player's copy-weighted rolls — the
-//     shop's chess slots and the reward offers' temporary refreshes [ASSUMED] — weighted like any chess of its tier, once
+//     shop's chess slots use remaining copies; free reward offers use the initial capacity regardless of stock, once
 //     the 调度中心 has reached the slot's shopLevel (activity_table shopLevelDisplayDataDict lists the tier-5 slots at
 //     level 5 and the tier-6 slots at level 6; PRTS 帮助 "仅在调度中心等级 ≥ 干员所在等阶"). The price is the slot's (any
 //     chess of its tier: 4).
@@ -210,21 +210,21 @@ export class PlayerDiy {
    * shopLevel), or null (none — the shared pool's roll alone, exactly as without picks).
    * @returns {Array<[string, { cap: number, left: number, tier: number, shopLevel: number }]> | null}
    */
-  diyRollEntries() {
+  diyRollEntries({ ignoreStock = false } = {}) {
     if (!this.diyStock || !this.diyStock.entries.size) return null;
     const out = [];
-    for (const [id, e] of this.diyStock.entries) if (e.left > 0 && this.shop.level >= e.shopLevel) out.push([id, e]);
+    for (const [id, e] of this.diyStock.entries) if ((ignoreStock || e.left > 0) && this.shop.level >= e.shopLevel) out.push([id, e]);
     return out.length ? out : null;
   }
 
   /**
    * The stock entries a random grant of this player draws besides the shared pool (see the header): every slotted piece
-   * with copies left, whatever the 调度中心 level (the roll's own tier rules apply), or null (none).
+   * whatever the 调度中心 level (the roll's own tier rules apply). `ignoreStock` includes exhausted identities.
    * @returns {Array<[string, { cap: number, left: number, tier: number, shopLevel: number }]> | null}
    */
-  diyStockEntries() {
+  diyStockEntries({ ignoreStock = false } = {}) {
     if (!this.diyStock || !this.diyStock.entries.size) return null;
-    const out = [...this.diyStock.entries].filter(([, e]) => e.left > 0);
+    const out = [...this.diyStock.entries].filter(([, e]) => ignoreStock || e.left > 0);
     return out.length ? out : null;
   }
 

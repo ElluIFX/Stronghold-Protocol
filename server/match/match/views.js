@@ -50,7 +50,10 @@ export class MatchViews {
         const f = this.fields.find((x) => x.players.includes(ps.playerId));
         return f && f.live ? 'combat' : 'done';
       }
-      case PHASE.UNITE: return this.unitePlan && this.unitePlan.helpers.includes(ps) ? 'helping' : 'done';
+      case PHASE.UNITE: {
+        const group = this.unitePlan && uniteGroups(this.unitePlan)[this.unitePlan.activeGroup || 0];
+        return group && group.helpers.includes(ps) ? 'helping' : 'done';
+      }
       case PHASE.ROUND_START: return 'acting';
       default: return 'done';
     }
@@ -145,7 +148,7 @@ export class MatchViews {
       const s = this.sp;
       v.sp = {
         family: s.family, name: s.name, desc: s.desc, eventId: s.eventId,
-        cards: s.cards.map(c => ({ ...cardView(c), soldOut: c.kind === 'item' && !this.itemPool.canGain(c.id) })), order: s.order.slice(),
+        cards: s.cards.map(c => cardView(c)), order: s.order.slice(),
         turn: this.spTurn(), picks: { ...s.picks }, taken: { ...s.taken }, untimed: !!s.untimed,
       };
       // more than 4 players alive at the draft start (remake extension): a later pick lasts largeRoom.spTurn, not the
@@ -155,8 +158,9 @@ export class MatchViews {
     }
     if (this.phase === PHASE.UNITE && this.unitePlan) {
       v.unite = { helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId) };
-      // several 联防 fields (more than 4 alive, unite.js): which helpers and leakers each one holds, in field order
+      // Planned helper stages retain their labels while only the active stage has a running field.
       const groups = uniteGroups(this.unitePlan);
+      v.unite.activeFieldId = groups[this.unitePlan.activeGroup || 0]?.fieldId || null;
       if (groups.length > 1) v.unite.fields = groups.map((g) => ({ fieldId: g.fieldId, helpers: g.helpers.map((p) => p.playerId), leakers: g.leakers.map((p) => p.playerId) }));
     }
     // SETTLE after a 联防: its outcome as data (settle.js uniteResultView; GitHub #235, PR #112) — { through, helpers,

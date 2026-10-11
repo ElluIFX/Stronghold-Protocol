@@ -1160,8 +1160,8 @@ test('缪尔赛思: MLYSS_WTRMAN — an enemy in a copied 流形\'s range trigge
   checkInvariants(h.b);
 });
 
-test('skill stat mods match the official text at both levels (normal Lv4 / elite Lv7)', () => {
-  // [chess, mods key, text regex] — the number in the skill text must be what the running skill buff applies
+test('skill stat mods match text coefficients with operator balance adjustments at both levels', () => {
+  // [chess, mods key, text regex] — Rosmontis's numerical adjustment preserves the source text.
   const rows = [
     ['6_02', 'atkPct', /攻击力\+(\d+)%/], ['6_02', 'aspd', /攻击速度\+(\d+)/],
     ['6_03', 'hpPct', /生命上限\+(\d+)%/], ['6_03', 'atkPct', /攻击力\+(\d+)%/], ['6_03', 'defPct', /防御力\+(\d+)%/],
@@ -1180,7 +1180,7 @@ test('skill stat mods match the official text at both levels (normal Lv4 / elite
       assert.ok(u.skill.activate('test', { free: true }), `${cid} activates`);
       const m = String(u.def.skill.description).match(re);
       assert.ok(m, `${cid} text has ${re}`);
-      const want = key === 'aspd' ? +m[1] : +m[1] / 100;
+      const want = (key === 'aspd' ? +m[1] : +m[1] / 100) * (id === '6_12' ? 2 : 1);
       const buff = u.findBuff(`skill:${u.id}`);
       assert.ok(buff && near(buff.mods[key], want, 1e-9), `${cid} ${key} ${buff?.mods?.[key]} ≠ text ${want}`);
       checkInvariants(h.b);

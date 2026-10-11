@@ -18,6 +18,20 @@ import { getData } from '../../server/data.js';
 import { GEO } from '../../shared/constants.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+globalThis.fetch = async (url) => {
+  const name = String(url).split('/').pop();
+  try {
+    const body = readFileSync(path.join(ROOT, 'data', name), 'utf8');
+    return { ok: true, status: 200, json: async () => JSON.parse(body) };
+  } catch {
+    return { ok: false, status: 404, json: async () => ({}) };
+  }
+};
+const { data } = await import('../../public/js/data.js');
+await data.loadAll('bonds', 'chess', 'items', 'assets', 'garrisons');
+const { BondPopup } = await import('../../public/js/ui/bondStrip.js');
+const { BondChips, ChessDetail, resolveDetail } = await import('../../public/js/ui/detailPanel.js');
+
 const load = (f) => JSON.parse(readFileSync(path.join(ROOT, 'data', f), 'utf8'));
 const chess = load('chess.json');
 const items = load('items.json');
@@ -114,21 +128,6 @@ describe('变形同构体 — the bond popup\'s member list', () => {
 });
 
 // ---- the components (htm vnodes walked like test/ui/watch-bonds.test.js) -------------------------------------------
-// the browser data store reads the real data files from disk
-globalThis.fetch = async (url) => {
-  const name = String(url).split('/').pop();
-  try {
-    const body = readFileSync(path.join(ROOT, 'data', name), 'utf8');
-    return { ok: true, status: 200, json: async () => JSON.parse(body) };
-  } catch {
-    return { ok: false, status: 404, json: async () => ({}) };
-  }
-};
-const { data } = await import('../../public/js/data.js');
-await data.loadAll('bonds', 'chess', 'items', 'assets', 'garrisons');
-const { BondPopup } = await import('../../public/js/ui/bondStrip.js');
-const { BondChips, ChessDetail, resolveDetail } = await import('../../public/js/ui/detailPanel.js');
-
 function* walk(v) {
   if (Array.isArray(v)) { for (const x of v) yield* walk(x); return; }
   if (!v || typeof v !== 'object') return;

@@ -11,6 +11,18 @@ import { num, tbb, live, opsOf, selectedSkill, batOf } from '../shared/tier6.js'
 /** S2 末梢阻断 "溅射范围扩大": radius 1.5 (PRTS 溅射半径一览, 技能: 迷迭香 末梢阻断 1.5; ×1.3 [ASSUMED] until 0.1.1). */
 const ROSMON_S2_SPLASH = 1.5;
 
+function skillAftershocks(scale) {
+  return (battle, unit, target, info) => {
+    const count = Math.max(1, (unit.profile.shockTimes ?? 2) - 1);
+    for (let i = 1; i <= count; i++) battle.after(0.3 * i, () => {
+      for (const enemy of battle.foesInRadius(info.x, info.y, unit.profile.splashRadius || 1, true)) {
+        if (enemy.isFlying) continue;
+        battle.dealDamage(unit, enemy, { amount: unit.s.atk * scale, type: 'phys', isSplash: true, tags: ['aftershock'] });
+      }
+    });
+  };
+}
+
 function rosmon(bb, chess, def) {
   const t0 = tbb(def, 0), t1 = tbb(def, 1);
   const sid = selectedSkill(chess, def);
@@ -21,6 +33,7 @@ function rosmon(bb, chess, def) {
     skchr_rosmon_1: {
       kind: 'instant',
       attack: {
+        afterHit: skillAftershocks(num(bb.append_atk_scale, 0.5)),
         onEachHit({ battle, unit, target, kind }) {
           if (!target || !target.alive || (kind !== 'main' && kind !== 'splash')) return;
           battle.dealDamage(unit, target, { amount: unit.s.atk * num(bb.extra_atk_scale, 1), type: 'arts', isSkill: true, tags: ['skill'] });
@@ -34,6 +47,7 @@ function rosmon(bb, chess, def) {
       // [ASSUMED] blocked enemies only; 白铁's unblockable 铁钳号 never: it does not open it (skills.js allyTargetsOk)
       allyTargets: false,
       mods: { batPct: batOf(bb.base_attack_time, def, true), atkPct: num(bb.atk) },
+      attack: { afterHit: skillAftershocks(num(bb['attack@append_atk_scale'], 0.5)) },
       targeting: { maxTargets: Math.max(1, Math.floor(num(bb['attack@max_target'], 2))) },
       onStart({ battle, unit }) {
         let n = 0;

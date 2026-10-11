@@ -2,7 +2,7 @@
 // effect:builtin_gift): act2autochess eff_acarm109 "下个休整期向相应盟约人数最多的队友发送1个原干员"; band_fang
 // "原干员在下回合传递给对应盟约人数最多的队友".
 //   * community report #6 after 0.1.2: an ELITE carrier arrived at the teammate as the normal card — the gift is the
-//     original operator, an elite with its 3 pool copies;
+//     original operator, preserving its elite form; purchased carrier copies return and the gift occupies no stock;
 //   * GitHub #86: a sender eliminated before the next round start got no onRoundStart, so the gift was lost — it is
 //     delivered anyway (afterElimination); a failed grant keeps the gift for the next round start; a receiver
 //     eliminated meanwhile is replaced by the living teammate with the most members of the bonds [ASSUMED].
@@ -43,7 +43,7 @@ const gifts = (ps) => ps.effects.filter((e) => e.key === 'effect:builtin_gift');
 const knockOut = (ps) => { ps.lp = 1; FakeBattle.script = (b) => ({ leaks: Object.fromEntries(b.players.map((id) => [id, 1])) }); };
 const deploy = (m, ps, id) => give(m, ps, id, 'board', legalTileFor(m, ps, id));
 
-test('信标 on an elite: the teammate receives that elite with its 3 pool copies, not the normal card (community report #6)', () => {
+test('信标 on a purchased elite: returns its 3 copies and grants that elite without occupying stock', () => {
   const { h, m, equip } = setup({ seed: 31 });
   const p0 = h.ps('p_0'), p1 = h.ps('p_1');
   const cid = plain((c) => c.tier === 3 && c.bonds.length)[0];
@@ -60,8 +60,8 @@ test('信标 on an elite: the teammate receives that elite with its 3 pool copie
   const got = ofBase(m, p1, cid);
   assert.equal(got.length, 1, 'gift arrived');
   assert.equal(got[0].id, gid, 'as the elite');
-  assert.equal(got[0].poolCopies, 3, 'holding the 3 copies');
-  assert.equal(m.pool.left(cid), left, 'taken from the pool again');
+  assert.equal(got[0].poolCopies, 0, 'the gift occupies no purchased copies');
+  assert.equal(m.pool.left(cid), left + 3, 'the purchased carrier copies remain available');
   assert.equal(gifts(p0).length, 0, 'removed once granted');
   h.invariants();
 });
@@ -72,7 +72,7 @@ test('信标 on a normal operator still sends the normal card', () => {
   const cid = plain((c) => c.tier === 2 && c.bonds.length)[0];
   assert.deepEqual(equip(giveItem(m, p0, BEACON), give(m, p0, cid, 'hand')), OK);
   h.toPrep(2);
-  assert.deepEqual(ofBase(m, p1, cid).map((p) => [p.id, p.poolCopies]), [[cid, 1]]);
+  assert.deepEqual(ofBase(m, p1, cid).map((p) => [p.id, p.poolCopies]), [[cid, 0]]);
   h.invariants();
 });
 
@@ -93,21 +93,19 @@ test('信标: the gift still arrives when its sender is eliminated before the ne
   h.invariants();
 });
 
-test('信标: a grant that fails (no copy left in the pool) keeps the gift for the next round start', () => {
+test('信标: exhausted purchase stock does not delay a gift or occupy another copy', () => {
   const { h, m, equip } = setup({ seed: 37 });
   const p0 = h.ps('p_0'), p1 = h.ps('p_1');
   const cid = plain((c) => c.tier === 2 && c.bonds.length)[1];
   assert.deepEqual(equip(giveItem(m, p0, BEACON), give(m, p0, cid, 'hand')), OK);
-  // every copy taken by "other players" before the round start
+  // Exhaust the purchase stock before the round start.
   const held = m.pool.take(cid, 99);
   assert.ok(held > 0);
   h.drive(() => m.phase === 'PREP' && m.round === 2);
-  assert.equal(ofBase(m, p1, cid).length, 0, 'nothing granted');
-  assert.equal(gifts(p0).length, 1, 'the gift is kept');
-  m.pool.give(cid, held); // the copies come back (sold)
-  h.toPrep(3);
-  assert.deepEqual(ofBase(m, p1, cid).map((p) => p.id), [cid], 'delivered at the next round start');
+  assert.deepEqual(ofBase(m, p1, cid).map((p) => [p.id, p.poolCopies]), [[cid, 0]], 'delivered at the next round start');
+  assert.equal(m.pool.left(cid), 0, 'the gift does not change purchase stock');
   assert.equal(gifts(p0).length, 0);
+  m.pool.give(cid, held);
   h.invariants();
 });
 

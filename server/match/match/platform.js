@@ -165,7 +165,7 @@ export class MatchPlatform {
     if (phase === PHASE.BAND_DRAFT && d && !d.picks[ps.playerId]) {
       // the departed seat passes its turn with the default band (never one a teammate holds — defaultBand)
       const turn = this.draftTurn() === ps.playerId;
-      d.picks[ps.playerId] = this.defaultBand(ps.playerId);
+      d.picks[ps.playerId] = this.defaultBand();
       ps.bandId = d.picks[ps.playerId];
       if (turn) this.startDraftTurn();
     }

@@ -79,6 +79,25 @@ function pub4({ live = true, mode = 'client' } = {}) {
 }
 const row = (pub, id) => pub.players.find((p) => p.playerId === id);
 
+test('consecutive 联防 stages route every viewer to the active field and offer no inactive switch targets', () => {
+  for (const activeFieldId of ['u', 'u2']) {
+    const pub = pub8();
+    pub.unite.activeFieldId = activeFieldId;
+    pub.unite.fields.forEach(group => { group.leakers = pub.unite.leakers.slice(); });
+    pub.fields = pub.fields.filter(field => field.fieldId === activeFieldId);
+    for (const playerId of ['h1', 'h3', 'l5', 'l6']) {
+      assert.equal(uniteFieldOf(pub, playerId), activeFieldId);
+      assert.equal(uniteHomeField(pub, playerId), activeFieldId);
+      assert.deepEqual(uniteSwitchFields(pub, playerId), []);
+    }
+    assert.equal(uniteFieldOf(pub, 'spectator'), null);
+    assert.equal(uniteHomeField(pub, 'spectator', 'h3'), activeFieldId);
+    assert.equal(uniteHomeField(pub, 'spectator'), activeFieldId);
+    assert.deepEqual(uniteLocalFor(pub, { l5: 3 }, activeFieldId, 'l5'), { l5: 3 });
+    assert.equal(uniteLocalFor(pub, { l5: 3 }, activeFieldId === 'u' ? 'u2' : 'u', 'l5'), null);
+  }
+});
+
 describe('the 联防 fields of the view (battle/observe.js)', () => {
   test('several fields: m.public.unite.fields in field order; a helper\'s / leaker\'s field; the default field; numbers', () => {
     const v = pub8();
@@ -331,7 +350,7 @@ const slime = (pid, n) => Array.from({ length: n }, () => ({ enemyKey: 'enemy_10
  * An 8-human client-combat match driven into 联防 with the given leaks per seat (0 = a perfect round): the public
  * view and every player's b.start.
  */
-function uniteMatch(leaks, seed = 811) {
+function uniteMatch(leaks, seed = 811, stage = 0) {
   const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: leaks.length, seed, captureFrames: false, clientCombat: true, clients: false });
   h.m.start();
   h.drive(() => h.m.phase === PHASE.PREP && h.m.round === 1, { ready: false });
@@ -343,6 +362,10 @@ function uniteMatch(leaks, seed = 811) {
     : { leaked: [], perfect: true, coins: 0, layerGains: {}, killed: 5, total: 5, unitsEnd: [] }]));
   m._afterCombat();
   assert.equal(m.phase, PHASE.UNITE);
+  if (stage > 0) {
+    m._completeUniteStage({ synthetic: true });
+    h.drive(() => m.unitePlan.activeGroup === stage);
+  }
   const out = { view: m.publicView(), starts: new Map(leaks.map((_, i) => [`p_${i}`, h.lastTo(`p_${i}`, 'b.start')])), groups: uniteGroups(m.unitePlan) };
   m.dispose();
   return out;
@@ -375,39 +398,38 @@ function rig() {
   };
 }
 
-test('runner, two 联防 fields: each helper runs and reports its own field (`left` = its own leakers); a leaker\'s replica is the field holding its enemies', async () => {
-  // p_0..p_3 perfect (u = p_0, p_1; u2 = p_2, p_3); leakers p_4 (6) → u, p_5 (5) → u2, p_6 (4) → u2, p_7 (3) → u
+test('runner, consecutive 联防 fields: only active helpers report and every leaker watches the active field', async () => {
   const { view, starts, groups } = uniteMatch([0, 0, 0, 0, 6, 5, 4, 3]);
   assert.deepEqual(groups.map((g) => [g.fieldId, g.helpers.map((p) => p.playerId), g.leakers.map((p) => p.playerId)]),
-    [['u', ['p_0', 'p_1'], ['p_4', 'p_7']], ['u2', ['p_2', 'p_3'], ['p_5', 'p_6']]]);
+    [['u', ['p_0', 'p_1'], ['p_4', 'p_5', 'p_6', 'p_7']], ['u2', ['p_2', 'p_3'], ['p_4', 'p_5', 'p_6', 'p_7']]]);
   // the view the client reads
   assert.equal(multiUnite(view), true);
-  assert.deepEqual(uniteFields(view).map((f) => [f.fieldId, f.helpers, f.leakers]), [['u', ['p_0', 'p_1'], ['p_4', 'p_7']], ['u2', ['p_2', 'p_3'], ['p_5', 'p_6']]]);
-  assert.deepEqual(['p_0', 'p_2', 'p_4', 'p_5'].map((pid) => fieldLabel(view.fields.find((f) => f.fieldId === uniteHomeField(view, pid)), view, 'p_4')), ['联防阵地 1', '联防阵地 2', '联防阵地 1', '联防阵地 2']);
+  assert.deepEqual(uniteFields(view).map((f) => [f.fieldId, f.helpers, f.leakers]), [['u', ['p_0', 'p_1'], ['p_4', 'p_5', 'p_6', 'p_7']], ['u2', ['p_2', 'p_3'], ['p_4', 'p_5', 'p_6', 'p_7']]]);
+  assert.deepEqual(['p_0', 'p_2', 'p_4', 'p_5'].map((pid) => fieldLabel(view.fields.find((f) => f.fieldId === uniteHomeField(view, pid)), view, 'p_4')), ['联防阵地 1', '联防阵地 1', '联防阵地 1', '联防阵地 1']);
   // the b.starts: a helper its own field (the lowest-seat connected helper is the authority), a leaker the field holding its enemies
   const at = (pid) => starts.get(pid);
-  assert.deepEqual(['p_0', 'p_1', 'p_2', 'p_3', 'p_4', 'p_5', 'p_6', 'p_7'].map((pid) => at(pid).fieldId), ['u', 'u', 'u2', 'u2', 'u', 'u2', 'u2', 'u']);
-  assert.deepEqual(['p_0', 'p_1', 'p_2', 'p_3'].map((pid) => !!at(pid).authoritative), [true, false, true, false]);
+  assert.deepEqual(['p_0', 'p_1', 'p_2', 'p_3', 'p_4', 'p_5', 'p_6', 'p_7'].map((pid) => at(pid).fieldId), ['u', 'u', 'u', 'u', 'u', 'u', 'u', 'u']);
+  assert.deepEqual(['p_0', 'p_1', 'p_2', 'p_3'].map((pid) => !!at(pid).authoritative), [true, false, false, false]);
   assert.ok(['p_4', 'p_5', 'p_6', 'p_7'].every((pid) => at(pid).watch && !at(pid).authoritative));
-  assert.ok(at('p_2').battleId.endsWith('.u2'));
+  assert.ok(at('p_2').watch);
   for (const pid of ['p_0', 'p_2', 'p_4', 'p_5']) assert.equal(uniteHomeField(view, pid), at(pid).fieldId, `${pid}: the client\'s default field is the server\'s`);
 
-  // the authority of u2 (p_2): it runs and reports u2 — b.progress `left` only for u2's leakers
+  // The active authority reports every original leaker.
   const H = rig();
-  H.net.emit('b.start', at('p_2'));
+  H.net.emit('b.start', at('p_0'));
   await H.settle();
   H.advance(12_000);
   const prog = H.sent.filter((x) => x.t === 'b.progress');
   assert.ok(prog.length >= 8, `${prog.length} reports`);
-  assert.ok(prog.every((x) => x.battleId === at('p_2').battleId), 'its own field\'s battle');
-  assert.deepEqual(Object.keys(prog[0].left).sort(), ['p_5', 'p_6'], 'the first report: both of u2\'s leakers, nobody of u');
-  assert.ok(prog.every((x) => Object.keys(x.left).every((k) => k === 'p_5' || k === 'p_6')));
+  assert.ok(prog.every((x) => x.battleId === at('p_0').battleId), 'the active field battle');
+  assert.deepEqual(Object.keys(prog[0].left).sort(), ['p_4', 'p_5', 'p_6', 'p_7']);
+  assert.ok(prog.every((x) => Object.keys(x.left).every((k) => ['p_4', 'p_5', 'p_6', 'p_7'].includes(k))));
   const s = H.store.get().match.battle;
-  assert.equal(s.fieldId, 'u2');
+  assert.equal(s.fieldId, 'u');
   assert.equal(s.authoritative, true);
   H.runner.dispose();
 
-  // a leaker of u (p_7): its replica is u — its own count and p_4's come from it, u2's leakers from the server
+  // A leaker's replica carries every source count on the active field.
   const L = rig();
   L.net.emit('b.start', at('p_7'));
   await L.settle();
@@ -415,20 +437,20 @@ test('runner, two 联防 fields: each helper runs and reports its own field (`le
   const ls = L.store.get().match.battle;
   assert.equal(ls.fieldId, 'u');
   assert.equal(ls.watch, true);
-  assert.deepEqual(Object.keys(ls.uniteLeft).sort(), ['p_4', 'p_7']);
+  assert.deepEqual(Object.keys(ls.uniteLeft).sort(), ['p_4', 'p_5', 'p_6', 'p_7']);
   assert.ok(ls.uniteLeft.p_7 > 0 && ls.uniteLeft.p_7 <= 3);
   assert.equal(L.sent.filter((x) => x.t === 'b.progress').length, 0, 'a replica never reports');
   assert.equal(uniteLocalFor(view, ls.uniteLeft, ls.fieldId, 'p_7'), ls.uniteLeft, 'its own ×N: the replica');
-  assert.equal(uniteLocalFor(view, ls.uniteLeft, ls.fieldId, 'p_5'), null, 'a leaker of u2: not in this battle');
+  assert.equal(uniteLocalFor(view, ls.uniteLeft, ls.fieldId, 'p_5'), ls.uniteLeft);
   const p5 = { ...view.players.find((p) => p.playerId === 'p_5') };
   assert.equal(p5.uniteLeft, 5, 'the server sends each leaker\'s own field count');
-  assert.deepEqual(rowLp(p5, view, null, { uniteLocal: uniteLocalFor(view, ls.uniteLeft, ls.fieldId, 'p_5') }).left, 5, 'never read as 0 from the wrong field');
+  assert.deepEqual(rowLp(p5, view, null, { uniteLocal: uniteLocalFor(view, ls.uniteLeft, ls.fieldId, 'p_5') }).left, ls.uniteLeft.p_5, 'the active replica supplies the current survivor count');
   L.runner.dispose();
 });
 
 test('replay: each 联防 field of a round plays back on its own field (u / u2, kind unite) to the live battle\'s end', () => {
-  const { starts } = uniteMatch([0, 0, 0, 0, 6, 5, 4, 3]);
-  for (const pid of ['p_0', 'p_2']) {
+  for (const [pid, stage] of [['p_0', 0], ['p_2', 1]]) {
+    const { starts } = uniteMatch([0, 0, 0, 0, 6, 5, 4, 3], 811, stage);
     const st = starts.get(pid);
     const live = specMod.createBattleFromSpec(st.spec, DS);
     while (!live.finished && live.tickCount < 30 * 400) live.step();
@@ -469,9 +491,7 @@ test('runner, 8 alive and one perfect player: one field holding 7 leakers — ev
   H.runner.dispose();
 });
 
-test('a real 7-seat match, two 联防 fields: the client\'s default field of an eliminated player and a spectator seat is the server\'s, through their picks (0.2.0 item 56)', () => {
-  // seed 66, leaks p_0 2 / p_1 4, p_6 out before the round's battle: 6 alive — u = [p_2, p_3] (leaker p_1), u2 = [p_4,
-  // p_5] (leaker p_0); p_6 and the spectator seat s_1 follow the first player still in, p_0 (u2) until they pick someone
+test('a real 7-seat match routes eliminated players and spectators to the active 联防 stage', () => {
   const script = (b) => (b.kind === 'normal' ? { leaks: { p_0: 2, p_1: 4 } } : {});
   const h = makeMatch({ mode: 'coop', humans: 7, seed: 66, fake: true, clientCombat: true, script, captureFrames: false });
   h.start();
@@ -481,17 +501,19 @@ test('a real 7-seat match, two 联防 fields: the client\'s default field of an 
   h.ps('p_6').eliminate(m.round);
   h.drive(() => m.phase === PHASE.UNITE);
   assert.deepEqual(uniteGroups(m.unitePlan).map((g) => [g.fieldId, g.helpers.map((p) => p.playerId), g.leakers.map((p) => p.playerId)]),
-    [['u', ['p_2', 'p_3'], ['p_1']], ['u2', ['p_4', 'p_5'], ['p_0']]]);
+    [['u', ['p_2', 'p_3'], ['p_0', 'p_1']], ['u2', ['p_4', 'p_5'], ['p_0', 'p_1']]]);
   m.addSpectator('s_1');
   const view = m.publicView();
   assert.equal(multiUnite(view), true);
   const server = (pid) => m._uniteHomeField(m.players.get(pid) || m._spectator(pid)).fieldId;
-  assert.equal(h.lastTo('p_6', 'b.start').fieldId, 'u2', 'the 联防 start shows p_6 the field of p_0');
+  assert.equal(h.lastTo('p_6', 'b.start').fieldId, 'u', 'the 联防 start shows the active stage');
+  assert.deepEqual(view.fields.map(field => field.fieldId), ['u']);
+  assert.equal(view.unite.activeFieldId, 'u');
   for (const pid of ['p_6', 's_1']) {
     let pref = null; // (p_6's prep scout said p_0: the same answer)
     assert.equal(uniteHomeField(view, pid, pref), server(pid), `${pid}: no pick yet`);
     // the team rows / the ‹ › pill: a helper's row moves the server's watchPref, a leaker's row and the pill do not
-    for (const [fieldId, playerId] of [['u', null], ['u2', 'p_0'], ['u', 'p_2'], ['u2', null], ['u2', 'p_5'], ['u', 'p_1']]) {
+    for (const [fieldId, playerId] of [['u', null], ['u', 'p_0'], ['u', 'p_2'], ['u', 'p_5'], ['u', 'p_1']]) {
       assert.deepEqual(m.handle(pid, { t: 'g.watch', fieldId, ...(playerId ? { playerId } : {}) }), { ok: true });
       pref = watchPrefOf(view, pid, fieldId, playerId) || pref;
       const want = server(pid);

@@ -28,12 +28,12 @@
 //   联防          decided after the COMBAT_END pause from the players still in: runs iff co-op with ≥ 1 leaker and
 //                 ≥ 1 perfect player; helpers = unite.js helperOrder (PRTS: units > active bond > layers > standing
 //                 units > seat, research 08 §5); leakers = players with counted leaks; one field 'u' up to 4 alive —
-//                 above 4 alive ≤ min(⌈alive / 4⌉, leakers) fields 'u', 'u2', … (1–2 helpers and ≥ 1 leaker each, never an empty
-//                 one), every leaker on exactly one field by the greedy balance of counted leaks, a field holding only
-//                 its own leakers' enemies, m.fields = the plan's fields
+//                 above 4 alive ≤ ⌈alive / 4⌉ helper groups take consecutive fields 'u', 'u2', … (1–2 helpers each).
+//                 The first field receives all leaks; surviving enemies continue to the next helper group.
+//                 m.fields holds only the active field; every group tracks all leakers.
 //   settle        no unite ⇒ loss = min(cap, counted leaks); after 联防 a leaker loses ≤ cap (its leaked enemies'
-//                 offspring count too; billed from its own field — one whose battle could not run: exactly its own
-//                 leaks), everybody else ≤ min(cap, own counted leaks); LP ≤ 0 ⇔ eliminated
+//                 offspring count too; billed from the last completed field, or own leaks when no field ran),
+//                 everybody else ≤ min(cap, own counted leaks); LP ≤ 0 ⇔ eliminated
 //   final assault fields pair alive players by seat, team LP = Σ alive LP, boss pool = bossPoolHp() (per player alive,
 //                 above 4 alive too), the overtime factor's alive count; hidden core only after a win when
 //                 hiddenEligible() holds (threshold × players / 4 above 4 summed players)
@@ -52,7 +52,7 @@ import { PHASE } from '../../shared/constants.js';
 import { collectViolations } from './invariants.js';
 import { mergeTile, pieceDir, canPlace, placeClass } from './board.js';
 import { pairPlayers, bossPoolHp, hiddenEligible } from './finalAssault.js';
-import { helperOrder, uniteHelperGroups, uniteFieldBudget, uniteFieldCount, uniteFieldId, uniteGroups, uniteFieldResults } from './unite.js';
+import { helperOrder, uniteHelperGroups, uniteFieldBudget, uniteFieldCount, uniteFieldId, uniteGroups } from './unite.js';
 import { BAND_TURN_SECONDS } from './Match.js';
 import { spDraftCardCount } from './choices.js';
 import { assignTitles } from './results.js';
@@ -413,12 +413,11 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const leakers = alive.filter((p) => counted(p.playerId) > 0).map((p) => p.playerId).sort();
       const perfect = alive.filter((p) => counted(p.playerId) === 0);
       const ids = (list) => (list || []).map((p) => p.playerId);
-      // fields: 1 up to 4 alive (helperOrder, ≤ maxHelpers); above 4 alive (remake extension) min(⌈alive / 4⌉, leakers)
-      // at most, the top maxHelpers per field by the selection ranking, each field's helpers in the pair order
+      // Consecutive groups use the field budget regardless of leaker count, with maxHelpers per group.
       const budget = uniteFieldBudget(gd, alive.length);
       if (budget !== (alive.length > gd.largeRoom.players ? Math.ceil(alive.length / gd.largeRoom.players) : 1)) fail(`联防 field budget ${budget} for ${alive.length} alive`);
       const fieldCount = uniteFieldCount(gd, alive.length, leakers.length);
-      if (fieldCount !== Math.max(1, Math.min(budget, leakers.length))) fail(`联防 field count ${fieldCount} for ${alive.length} alive, ${leakers.length} leakers`);
+      if (fieldCount !== budget) fail(`联防 field count ${fieldCount} for ${alive.length} alive`);
       const want = fieldCount > 1 ? uniteHelperGroups(m, perfect, res, fieldCount).map(ids) : [ids(helperOrder(m, perfect, res))];
       const helpers = want.flat();
       if (helpers.length > gd.unite.maxHelpers * fieldCount) fail(`${helpers.length} 联防 helpers (max ${gd.unite.maxHelpers} × ${fieldCount} fields)`);
@@ -434,31 +433,24 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
         if (!g.helpers.length || g.helpers.length > gd.unite.maxHelpers) fail(`联防 field ${g.fieldId}: ${g.helpers.length} helpers`);
         if (!g.leakers.length) fail(`联防 field ${g.fieldId} has no leaker`);
         if (want[i] && JSON.stringify(ids(g.helpers)) !== JSON.stringify(want[i])) fail(`联防 field ${g.fieldId} helpers ${ids(g.helpers)} != ${want[i]}`);
-        // a field fights only its own leakers' enemies
-        const own = new Set(ids(g.leakers));
-        if (g.leaked.some((l) => !own.has(l.sourcePlayerId))) fail(`联防 field ${g.fieldId} holds another field's leaks`);
+        if (JSON.stringify(ids(g.leakers).sort()) !== JSON.stringify(leakers)) fail(`联防 field ${g.fieldId} leakers ${ids(g.leakers)} != ${leakers}`);
+        if (i === 0) {
+          if (JSON.stringify(g.leaked) !== JSON.stringify(plan.leaked)) fail('first 联防 field does not contain all initial leaks');
+          if (JSON.stringify([...g.notReentered]) !== JSON.stringify([...plan.notReentered])) fail('first 联防 field does not contain all initial non-reentering leaks');
+        } else if (g.leaked.length || g.notReentered.size) fail(`later 联防 field ${g.fieldId} has enemies before advancement`);
       });
-      // every leaker on exactly one field, spread by the greedy balance of counted leaks (largest first, then seat, to
-      // the least-loaded field, the lowest index on a tie)
-      const placed = groups.flatMap((g) => ids(g.leakers));
-      if (JSON.stringify(placed.slice().sort()) !== JSON.stringify(leakers)) fail(`联防 fields' leakers ${placed} != ${leakers}`);
-      if (groups.length > 1) {
-        const load = groups.map(() => 0);
-        const where = new Map();
-        for (const ps of plan.leakers.slice().sort((a, b) => counted(b.playerId) - counted(a.playerId) || a.seat - b.seat)) {
-          let best = 0;
-          for (let i = 1; i < load.length; i++) if (load[i] < load[best]) best = i;
-          where.set(ps.playerId, best);
-          load[best] += counted(ps.playerId);
-        }
-        groups.forEach((g, i) => { for (const pid of ids(g.leakers)) if (where.get(pid) !== i) fail(`联防 leaker ${pid} on ${g.fieldId}, the balance puts it on ${uniteFieldId(where.get(pid))}`); });
-      }
     });
     const r = orig(plan);
     runInvariants();
+    return r;
+  });
+  wrap(m, '_startUniteGroup', function (orig) {
+    const r = orig();
+    const plan = m.unitePlan;
     check('unite fields', () => {
       const groups = uniteGroups(plan);
-      const want = groups.map((g) => `${g.fieldId}:${g.helpers.map((p) => p.playerId).join('+')}`);
+      const active = groups[plan.activeGroup ?? 0];
+      const want = active ? [`${active.fieldId}:${active.helpers.map((p) => p.playerId).join('+')}`] : [];
       const got = m.fields.map((f) => `${f.fieldId}:${f.kind}:${f.players.join('+')}`.replace(':unite:', ':'));
       if (JSON.stringify(got) !== JSON.stringify(want)) fail(`联防 fields ${got.join(' | ')} != plan ${want.join(' | ')}`);
     });
@@ -473,17 +465,21 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     const res = orig(plan, uniteResult);
     check('settle', () => {
       const cap = gd.lpCapPerRound;
-      // per 联防 field (several above 4 alive): whether it ran (a real result) — its leakers are billed from it
+      // Leakers use the last actual result; a later unstarted or synthetic group cannot overwrite it.
       const ran = new Map();
-      for (const { group, result } of uniteFieldResults(plan, uniteResult)) for (const ps of group.leakers || []) ran.set(ps, !!(result && !result.synthetic));
-      if (plan && uniteGroups(plan).length > 1 && !(Array.isArray(uniteResult) && uniteResult.length === uniteGroups(plan).length)) fail(`settle got ${Array.isArray(uniteResult) ? uniteResult.length : 'one'} 联防 result(s) for ${uniteGroups(plan).length} fields`);
+      const results = Array.isArray(uniteResult) ? uniteResult : [uniteResult];
+      const actual = results.filter(result => result && !result.synthetic);
+      const last = actual[actual.length - 1];
+      for (const ps of plan?.leakers || []) ran.set(ps, !!last);
+      const resultCount = Array.isArray(uniteResult) ? uniteResult.length : uniteResult ? 1 : 0;
+      if (plan && (resultCount < 1 || resultCount > uniteGroups(plan).length)) fail(`settle got ${resultCount} 联防 results for ${uniteGroups(plan).length} planned groups`);
       const uniteRan = [...ran.values()].some(Boolean);
       for (const [ps, lp0] of before) {
         const r = m.lastResults.get(ps.playerId) || { leaked: [] };
         const counted = (r.leaked || []).filter((l) => l && l.counted !== false).length;
         // after 联防 a leaker pays for every surviving enemy of its source — enemies spawned by its leaked enemies
         // (splitters, summoners) included — so only the cap bounds it; everybody else never exceeds own leaks. A leaker
-        // whose field could not run pays its own leaks exactly.
+        // without a completed field pays its own leaks exactly.
         const billed = ran.get(ps) === true;
         const max = billed ? cap : Math.min(cap, counted);
         if (ps.alive) {

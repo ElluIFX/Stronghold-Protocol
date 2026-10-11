@@ -12,8 +12,7 @@
 //   use_equip_gain_coin_when_next_round_start {count}     见钱眼开玩偶           +count funds next round
 //   equip_destory_deployment_cnt_change {count}           人事部文档             deploy cap = count
 //   use_equip_upgrade_char / equip_round_start_upgrade_char 博士投影             promote (golden: now, normal: next round)
-//   use_equip_reward_char_chess                           拟态物质               3rd copy (none when the pool is
-//                                                                                out), or with < 2 a same-bond chess
+//   use_equip_reward_char_chess                           拟态物质               3rd copy, or with < 2 a same-bond chess
 //   use_equip_reward_special_goods_char_chess {refresh_cnt} 寻呼模块             offer N same-bond chess (≤ shop level)
 //   use_equip_recruit_new_char_and_give_char_to_player_most_bond {refresh_cnt} 信标 destroy target, offer N same-tier
 //                                                                                chess, gift the original (an elite stays
@@ -40,7 +39,7 @@ const paramsOf = (ctx, item) => {
 };
 
 /**
- * The item gave nothing — the copies are all owned (the shared pool, research 06 §7) or no operator shares the bond — but
+ * The item gave nothing because no eligible operator shares the bond or the grant could not be stored, but
  * it is still destroyed ("装备时销毁"): say why instead of swallowing it (GitHub #401, the owner's OK of 2026-10-09).
  */
 function toastNothing(ctx, ev, chessName = null) {
@@ -144,19 +143,19 @@ const ITEM_HANDLERS = {
   },
   // 拟态物质 「若已拥有至少2名该初始干员，则再获得1名该初始干员；否则随机获得1名同盟约初始干员」: the 否则 is the owned < 2
   // case only. The original experiment BV1eLXXBqEgF (3:00) distinguishes this item from pool-weighted grants:
-  // it samples eligible operator identities and can grant beyond stock. All obtained copies still occupy the pool.
+  // it samples eligible operator identities. Grants occupy no purchase stock.
   use_equip_reward_char_chess: {
     onEquip(ctx, ev) {
       const base = ctx.gd.baseIdOf(ev.target.id);
       const owned = [...ctx.board(), ...ctx.hand(), ...ctx.temp()].filter((p) => p && p.kind === 'chess' && !p.golden && ctx.gd.baseIdOf(p.id) === base).length;
       if (owned >= 2) {
-        if (!ctx.grantChess(base, { requirePool: false })) toastNothing(ctx, ev);
+        if (!ctx.grantChess(base)) toastNothing(ctx, ev);
         return;
       }
       const bonds = new Set(ctx.pieceBonds(ev.target.uid));
       const id = ctx.rollChess({ maxTier: 6, ignoreCounts: true,
         filter: cid => ctx.gd.chess(cid)?.bonds?.some(b => bonds.has(b)) });
-      if (!id || !ctx.grantChess(id, { requirePool: false })) toastNothing(ctx, ev);
+      if (!id || !ctx.grantChess(id)) toastNothing(ctx, ev);
     },
   },
   use_equip_reward_special_goods_char_chess: {
@@ -164,7 +163,7 @@ const ITEM_HANDLERS = {
       const n = Math.max(1, int(paramsOf(ctx, ev.item).refresh_cnt, 3));
       const bonds = ctx.pieceBonds(ev.target.uid);
       const ids = [];
-      // a pick-one offer never shows one operator twice (user playtest #6 item 19); fewer cards when the pool runs out
+      // A pick-one offer never shows one operator twice; fewer cards when there are fewer eligible identities.
       for (let k = 0; k < n; k++) { const id = rollSameBond(ctx, bonds, ctx.shopLevel(), ids); if (id) ids.push(id); }
       if (ids.length) ctx.offerChess(ids, { source: 'item' });
       else toastNothing(ctx, ev);
@@ -174,8 +173,7 @@ const ITEM_HANDLERS = {
   // 干员，免费获取其中一名 / 若在同盟模拟中且存在其他队友，下个休整期向相应盟约人数最多的队友发送1个原干员 / 相应盟约人数相同则
   // 随机发送"; 芬 band_fang "原干员在下回合传递给对应盟约人数最多的队友"). The gift is the ORIGINAL operator: an elite carrier
   // is sent as that elite (community report #6 after 0.1.2: it arrived as the normal card — the gift carried baseIdOf).
-  // Destroying the carrier returns its pool copies (an elite's 3) at once; the gift takes them again when it is granted
-  // (effect:builtin_gift: grantChess → acquireChess, an elite takes up to goldenCopies, as every effect grant).
+  // Destroying the carrier returns its purchased copies at once; the gift occupies no purchase stock.
   use_equip_recruit_new_char_and_give_char_to_player_most_bond: {
     onEquip(ctx, ev) {
       const target = ctx.piece(ev.target.uid);
@@ -236,7 +234,7 @@ const ITEM_HANDLERS = {
     onArt(ctx, ev) {
       const target = ev.targets.find((p) => p.kind === 'chess');
       if (!target) { ev.error = 'BAD_TARGET'; ev.detail = 'no operator in range'; return; }
-      const copy = ctx.grantChess(target.id, { requirePool: false });
+      const copy = ctx.grantChess(target.id);
       if (!copy) { ev.error = 'HAND_FULL'; return; }
       for (const it of target.items || []) {
         const itemPiece = ctx.grantItem(it.id);
@@ -270,8 +268,7 @@ const EFFECT_HANDLERS = {
   // EffectDispatcher.dispatchEliminated) — an eliminated player gets no onRoundStart, so the gift was lost (GitHub #86).
   // A receiver eliminated meanwhile is replaced by the living teammate with the most members of the operator's bonds
   // (ties at random) [ASSUMED]; with no teammate left alive the gift is dropped. The effect is removed only after the
-  // operator was granted: a grant that fails (no copy of it left in the shared pool, the receiver's 整备区 and temp
-  // full) keeps it for the next round start — the official text names no refund [ASSUMED].
+  // operator was granted: a receiver's full hand and temp keep it for the next round start.
   builtin_gift: {
     afterElimination: true,
     onRoundStart(ctx) {
@@ -286,8 +283,7 @@ const EFFECT_HANDLERS = {
       to.giftTicker(ctx.name, p.chessId, ctx.playerId);
     },
   },
-  // 整备: the next purchased item becomes advanced (golden). upgradeItem leaves it normal, and this
-  // charge unspent, when the shared stock has no room for the golden's second copy.
+  // The next purchased item becomes golden while retaining its purchased-copy occupancy.
   builtin_next_buy_golden_item: {
     onBuy(ctx, ev) {
       const ref = ctx.source.ref;

@@ -214,6 +214,7 @@
   "队友已选": "Taken by a Teammate",
   "初始生命值": "Initial LP",
   "选择一个策略查看详情": "Select a Strategy to view details",
+  "每种策略均可被多位博士重复选择": "Multiple Doctors may choose the same Strategy",
   "队友已选，请选择其他策略": "Taken by a Teammate, please choose another Strategy",
   "{turnName} 正在决策…": "{turnName} is deciding...",
   "跳过本轮，稍后再选": "Skip this turn and pick later",

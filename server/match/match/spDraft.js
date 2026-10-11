@@ -18,7 +18,7 @@ export class MatchSpDraft {
   enterSpDraft() {
     const alive = this.alivePlayers();
     // more than 4 alive (remake extension): alive + 2 cards (choices.js spDraftCardCount); 1–4 the official count
-    const draft = generateDraft(this.gd, this.rngDraft, this.round, { stageId: this.stageId, bondAvailable: (bondId) => this.bondLive(bondId), itemAvailable: (id) => this.itemPool.canGain(id), players: alive.length });
+    const draft = generateDraft(this.gd, this.rngDraft, this.round, { stageId: this.stageId, bondAvailable: (bondId) => this.bondLive(bondId), players: alive.length });
     if (!draft || !alive.length) { this.enterPrep(); return; }
     this.phase = PHASE.SP_DRAFT;
     let order = alive.map((p) => p.playerId);
@@ -39,7 +39,7 @@ export class MatchSpDraft {
     return s.order[s.idx] ?? null;
   }
 
-  spCardAvailable(card) { return !!card && this.sp?.taken[card.idx] == null && (card.kind !== 'item' || this.itemPool.canGain(card.id)); }
+  spCardAvailable(card) { return !!card && this.sp?.taken[card.idx] == null; }
 
   startSpTurn() {
     const s = this.sp;
@@ -190,28 +190,33 @@ export class MatchSpDraft {
     const p = typeof pool === 'string' && Object.hasOwn(pools, pool) ? pools[pool] : null;
     const rng = this.rngMeta;
     const tierList = (lo, hi) => { const out = []; for (let t = lo; t <= hi; t++) for (const id of this.gd.shopItemsByTier[t] || []) out.push(id); return out; };
+    const pick = (ids, weights = null) => {
+      const list = [...new Set(ids)].filter(id => this.gd.item(id));
+      const pairs = list.map(id => [id, weights ? Math.max(0, Number(weights.get(id)) || 0) : 1]).filter(([, weight]) => weight > 0);
+      return weightedPick(rng, pairs);
+    };
     if (p && p.kind === 'equip') {
       if (Array.isArray(p.weighted) && p.weighted.length) {
-        const pairs = p.weighted.filter((x) => Array.isArray(x) && this.gd.item(x[0]) && this.itemPool.canGain(x[0]));
-        return this.itemPool.pick(rng, pairs.map(x => x[0]), new Map(pairs));
+        const pairs = p.weighted.filter((x) => Array.isArray(x) && this.gd.item(x[0]));
+        return pick(pairs.map(x => x[0]), new Map(pairs));
       }
       if (Array.isArray(p.items) && p.items.length) {
         const items = p.items.filter((id) => this.gd.item(id));
-        return this.itemPool.pick(rng, items);
+        return pick(items);
       }
       let list;
       if (Array.isArray(p.tiers) && p.tiers.length) list = p.tiers.flatMap((t) => this.gd.shopItemsByTier[t] || []);
       else list = tierList(1, p.maxTier === 'shopLevel' ? Math.max(1, Math.min(6, shopLevel)) : 6);
-      return this.itemPool.pick(rng, list);
+      return pick(list);
     }
     const list = Number.isInteger(tier) ? tierList(tier, tier) : tierList(1, Math.max(1, Math.min(6, maxTier)));
-    return this.itemPool.pick(rng, list);
+    return pick(list);
   }
 
   /**
    * Roll a choices.json pool (ctx.rollPool). Equip pools → rollItemId. Chess pools: an `items` (uniform) or `weighted`
-   * list — only chess with a free pool copy (or outside the pool) qualify — else a copy-weighted draw from the shared
-   * pool filtered by `tier` / `minTier` / `maxTier` (number or 'shopLevel') / `bond`; `golden: true` yields the elite id.
+   * list of valid chess — else a draw from the match's eligible operators filtered by `tier` / `minTier` / `maxTier`
+   * (number or 'shopLevel') / `bond`; `golden: true` yields the elite id.
    * `extra` (the drawing player's 自选 stock, player/diy.js diyStockEntries) joins that shared-pool draw, `chessOf` reads the
    * bonds (the player's data view: a slotted slot's operator) — 0.2.0 WE2.
    * @returns {{ kind: 'item'|'chess', id: string, golden?: boolean } | null}
@@ -227,17 +232,13 @@ export class MatchSpDraft {
     }
     if (p.kind !== 'chess') return null;
     const rng = this.rngMeta;
-    const free = (id) => {
-      if (typeof id !== 'string' || !this.gd.chess(id)) return false;
-      const base = this.gd.baseIdOf(id);
-      return !this.pool.has(base) || this.pool.left(base) > 0;
-    };
+    const valid = (id) => typeof id === 'string' && !!this.gd.chess(id);
     let id = null;
     if (Array.isArray(p.weighted) && p.weighted.length) {
-      const pairs = p.weighted.filter((x) => Array.isArray(x) && free(x[0]));
+      const pairs = p.weighted.filter((x) => Array.isArray(x) && valid(x[0]));
       id = pairs.length ? weightedPick(rng, pairs) : null;
     } else if (Array.isArray(p.items) && p.items.length) {
-      const list = p.items.filter(free);
+      const list = p.items.filter(valid);
       id = list.length ? list[Math.floor(rng() * list.length)] : null;
     } else {
       const maxTier = p.maxTier === 'shopLevel' ? lvl : Number.isInteger(p.maxTier) ? p.maxTier : 6;
@@ -249,6 +250,7 @@ export class MatchSpDraft {
         maxTier,
         filter: (cid, e) => e.tier >= minTier && (!bond || (Array.isArray(recOf(cid)?.bonds) && recOf(cid).bonds.includes(bond))),
         extra,
+        ignoreStock: true,
       });
     }
     if (!id) return null;

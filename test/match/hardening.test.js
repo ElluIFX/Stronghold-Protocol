@@ -92,7 +92,7 @@ test('merge with a full hand and a full temp: the elite takes its deployed copy\
   const elite = [...ps.board.values()].find((p) => p.id === m.gd.goldenIdOf(id));
   assert.ok(elite, 'the elite stands on a consumed copy\'s tile');
   assert.equal(ps.find(elite.uid).key, `${t1[0]},${t1[1]}`, 'the copy that deploys first (legalTileFor walks the top row left to right: on one row, the deploy order)');
-  assert.equal(elite.poolCopies, 3, 'it holds all three copies');
+  assert.equal(elite.poolCopies, 2, 'the gift completes the merge and preserves the two purchased copies');
   assert.deepEqual(elite.items.map((x) => x.id).sort(), ['chess_item_1_01_e_a', 'chess_item_2_04_e_a'], 'returned items are kept on it');
   checkInvariants(m);
   m.dispose();
@@ -335,9 +335,11 @@ test('ctx.rollPool: equip pools, weighted / listed chess pools, shopEligible fil
   }
   assert.equal(ctx.rollPool('nope'), null);
   assert.equal(ctx.rollPool('constructor'), null);
-  // a listed chess with no copy left is never rolled
+  // Exhausted purchase identities remain eligible for a listed effect grant.
   const taken = m.pool.take('chess_char_1_04_a', 99);
-  for (let i = 0; i < 20; i++) assert.notEqual(ctx.rollPool('pool_chess_glady')?.id, 'chess_char_1_04_a');
+  const draws = Array.from({ length: 20 }, () => ctx.rollPool('pool_chess_glady')?.id);
+  assert.ok(draws.includes('chess_char_1_04_a'));
+  assert.equal(m.pool.left('chess_char_1_04_a'), 0, 'drawing a gift identity leaves purchase stock unchanged');
   m.pool.give('chess_char_1_04_a', taken);
   m.dispose();
 });

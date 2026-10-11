@@ -9,9 +9,9 @@
 //   * eliminated: anything — each phase reset starts on the player it follows (the server's prep scout / b.start,
 //     followedScout).
 // 联防 with more than 4 alive players (a remake extension, server/match/unite.js): several 联防 fields 'u', 'u2', … (2
-// helpers each, each holding its own leakers' enemies; m.public.unite.fields). A helper plays its own field and cannot
+// helpers each, running consecutively with all surviving leaks; m.public.unite.fields). A helper plays its active field and cannot
 // look at another one while it runs (server/match/match/watch.js _watchClient 'own battle running'); a leaker is shown
-// the field holding its enemies — its row leads there, and 返回战场 goes back to it; anyone else (an eliminated player, a
+// the active field holding its enemies — its row leads there, and 返回战场 goes back to it; anyone else (an eliminated player, a
 // spectator seat, a living player without a part in it) starts on the field of the player it follows (0.2.0 item 56:
 // the one it last picked, else the first player still in — followedPlayer, the mirror of the server's watchPref), goes
 // back there with 返回战场, and may switch (uniteSwitchFields). With one 联防 field (1–4 alive) nothing of this applies:
@@ -58,10 +58,10 @@ export function uniteFields(pub) {
   return [{ fieldId: listed ? listed.fieldId : 'u', helpers: ids(u.helpers), leakers: ids(u.leakers) }];
 }
 
-/** The 联防 field holding a player: a helper's own field, the field with a leaker's enemies; null for anyone else. */
+/** The active 联防 field for helpers and leakers; null for anyone outside the plan. */
 export function uniteFieldOf(pub, playerId) {
   const f = uniteFields(pub).find((x) => x.helpers.includes(playerId) || x.leakers.includes(playerId));
-  return f ? f.fieldId : null;
+  return f ? pub?.unite?.activeFieldId || f.fieldId : null;
 }
 
 /**
@@ -109,7 +109,7 @@ export function uniteHomeField(pub, playerId, pref = null) {
   const own = uniteFieldOf(pub, playerId);
   if (own) return own;
   const followed = followedPlayer(pub, playerId, pref);
-  return (followed && uniteFieldOf(pub, followed)) || uniteFields(pub)[0]?.fieldId || null;
+  return (followed && uniteFieldOf(pub, followed)) || pub?.unite?.activeFieldId || uniteFields(pub)[0]?.fieldId || null;
 }
 
 /**

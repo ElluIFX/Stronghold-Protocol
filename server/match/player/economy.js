@@ -62,7 +62,10 @@ export class PlayerEconomy {
 
   _rollChessSlot() {
     // the slotted 自选 pieces join the draw once the 调度中心 reaches their slot's level (player/diy.js diyRollEntries)
-    const id = this.m.pool.roll(this.m.rngShop, { maxTier: this.shop.level, extra: this.diyRollEntries() });
+    const id = this.m.pool.roll(this.m.rngShop, {
+      maxTier: this.shop.level, extra: this.diyRollEntries(),
+      weight: (candidate, copies) => this._rosmontisRecruitWeight(candidate, copies),
+    });
     return id ? { kind: 'chess', id, basePrice: this.gd.chessPrice(id), frozen: false, sold: false } : null;
   }
 
@@ -148,14 +151,14 @@ export class PlayerEconomy {
       if (handFull) return fail(ERR.HAND_FULL);
       this.spend(price);
       slot.sold = true;
-      piece = this.acquireChess(slot.id, { source: 'buy' });
+      piece = this.acquireChess(slot.id, { source: 'buy', fromPool: true });
     } else {
       if (!this.gd.item(slot.id)) return fail(ERR.BAD_TARGET);
       if (!this.m.itemPool.canGain(slot.id)) return fail(ERR.SOLD_OUT);
       if (handFull) return fail(ERR.HAND_FULL);
       this.spend(price);
       slot.sold = true;
-      piece = this.acquireItem(slot.id, { source: 'buy' });
+      piece = this.acquireItem(slot.id, { source: 'buy', fromPool: true });
     }
     this.stats.buys++;
     this.round.buys++;

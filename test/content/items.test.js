@@ -954,7 +954,7 @@ test('拟态物质: owning 2 copies gives the 3rd (→ elite); otherwise a rando
   cover(A('5_05'), B('5_05'));
 });
 
-test('拟态物质 grants the third copy even when stock is empty; the gain still merges and occupies stock (measured pool rule)', () => {
+test('拟态物质 grants the third copy at empty stock and merges without taking purchase copies', () => {
   // the report: an elite 溯光星源 (3 of the Ⅵ阶's 5 copies) and 2 normal ones — the pool is empty, the item text's 否则
   // (a random same-bond operator) is only for fewer than 2 owned
   const cid = 'chess_char_6_16_a';
@@ -974,7 +974,9 @@ test('拟态物质 grants the third copy even when stock is empty; the gain stil
     assert.deepEqual(chessIn(ps), [elite, elite], `${item}: the third normal copy merges`);
     assert.ok(!ps.find(it.uid), `${item}: consumed`);
     assert.deepEqual(warns, [], `${item}: a successful grant must not report an empty-pool failure`);
-    assert.equal(m.pool.entries.get(cid).left, -1, 'the sixth owned copy still occupies the pool');
+    assert.equal(m.pool.entries.get(cid).left, 0, 'the gifted sixth copy leaves purchase stock unchanged');
+    const ownedCopies = [...ps.board.values(), ...ps.hand, ...ps.temp].filter(p => p?.kind === 'chess' && p.id === elite).map(p => p.poolCopies).sort();
+    assert.deepEqual(ownedCopies, [2, 3], 'the merged elite preserves its two purchased copies');
   }
   // 2 normal copies, no elite, the pool drained by other players: the third copy is still granted.
   {
@@ -999,7 +1001,7 @@ test('拟态物质 grants the third copy even when stock is empty; the gain stil
     assert.deepEqual(equip(giveItem(m, ps, A('5_05')), t), OK);
     assert.deepEqual(chessIn(ps), [elite]);
     assert.deepEqual(warns, [], 'a grant: no warn toast');
-    assert.equal(m.pool.left(cid), 2, 'the elite holds 3 copies');
+    assert.equal(m.pool.left(cid), 3, 'the elite retains its two purchased copies');
   }
 });
 

@@ -265,8 +265,8 @@ test('联防 wave: walkers on the escaped lrsldr action, flyers on yokai, tokens
   for (let i = 0; i < 3; i++) leaked.push({ enemyKey: 'enemy_1005_yokai', mods: { slot: 'NF' }, sourcePlayerId: 'b', bounty: { coins: 2, ownerPlayerId: 'b' } });
   leaked.push({ enemyKey: 'enemy_1007_slime', mods: null, sourcePlayerId: 'b' });
   leaked.push({ enemyKey: 'enemy_1269_nhfly', mods: null, sourcePlayerId: 'b' }); // 枯朽之种: summoned only ⇒ token
-  const one = buildUniteWave(gd, leaked, 1, 60);
-  const two = buildUniteWave(gd, leaked, 2, 60);
+  const one = buildUniteWave(gd, leaked, 1, 1000);
+  const two = buildUniteWave(gd, leaked, 2, 1000);
   assert.equal(one.templateId, 'act1autochess_escaped_single');
   assert.equal(two.templateId, 'act1autochess_escaped_multi');
   for (const w of [one, two]) {

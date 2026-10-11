@@ -13,7 +13,7 @@ import { onSettle, resetRoundCounters } from '../botEmotes.js';
 export class MatchSettle {
   /**
    * `plan`: the 联防 plan (null: none ran); `uniteResult`: its field's result — with several 联防 fields (above 4 alive)
-   * an array of the fields' results in field order (unite.js uniteFieldResults). Each leaker is billed from its own field.
+   * an array of the completed stages' results in order. Each leaker is billed from the final stage that ran.
    */
   settle(plan, uniteResult) {
     this.phase = PHASE.SETTLE;
@@ -22,8 +22,7 @@ export class MatchSettle {
     // the pending in-battle gains the views showed become persistent below (alive players) or lapse (DESIGN §20.15)
     for (const ps of this.order) if (ps.pendingLayerGains) { ps.pendingLayerGains = null; ps.dirty(); }
     const cap = this.gd.lpCapPerRound;
-    // a leaker's survivors on its own 联防 field; null when that battle could not run at all (synthetic result) — it must
-    // not wipe the leaker's loss: its own leaks are charged
+    // Final survivors retain their original source; a synthetic stage preserves its incoming count.
     const bills = plan ? uniteBills(plan, uniteResult) : null;
     const billed = bills ? [...bills.values()].filter((n) => n != null) : [];
     // The 联防's outcome as data for the SETTLE view (m.public.uniteResult, views.js; GitHub #235, PR #112 by @Convey123):

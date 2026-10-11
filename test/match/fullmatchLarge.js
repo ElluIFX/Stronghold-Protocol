@@ -5,8 +5,8 @@
 //   * shared pool: copies per chess = ceil(base × max(1, n / 4)), n = the seats at the start (humans + AI);
 //   * strategy draft: one turn per seat; a timed draft of more than 4 seats gives 20 s a turn (30 s otherwise);
 //   * 机变: max(6, alive + 2) cards for the alive pickers (7–10 cards for 5–8 players);
-//   * 联防: alive ≤ 4 → one field 'u' with ≤ 2 helpers; alive > 4 → up to k = ceil(alive / 4) fields 'u', 'u2', …,
-//     1–2 helpers each, every leaker on exactly one field, `unite.fields` published only with more than one field;
+//   * Unite: one active helper stage at a time; up to ceil(alive / 4) planned stages, 1–2 helpers each;
+//     all original leaks enter the first stage and only survivors enter the following stages;
 //   * 最终攻势 / 隐秘核心: seat pairs b1…b⌈alive / 2⌉, the shared pool = bloodPoint × alive (0.2.0's per-player pool,
 //     DESIGN §25.13.4: the 4 players' share × alive / 4 above 4 alive);
 //   * result: a row per seat; with more than 4 players everyone who spent funds (挥金如土's stat) holds a title —
@@ -57,8 +57,8 @@ export function runLarge({ difficulty, humans, bots, seed }) {
   observer = (m) => {
     if (match == null) match = m;
     if (m !== match) return;
-    const key = `${m.phase}:${m.round}`;
-    // the draft / 机变 / 联防 plan and the boss pool are fixed when the phase starts: one look per phase is enough
+    const key = `${m.phase}:${m.round}:${m.phase === PHASE.UNITE ? m.unitePlan?.activeGroup || 0 : ''}`;
+    // Observe each helper stage as well as every draft and boss phase.
     if (done.has(key)) return;
     if (m.phase === PHASE.BAND_DRAFT && !m.draft) return;
     if (m.phase === PHASE.SP_DRAFT && !m.sp) return;
@@ -82,47 +82,35 @@ export function runLarge({ difficulty, humans, bots, seed }) {
     if (v.unite) {
       seen.unite++;
       const uf = (v.fields || []).filter((x) => x.kind === 'unite');
-      const helpers = uf.flatMap((x) => x.players);
-      check(uf.length >= 1, 'a 联防 has a field', at);
+      const helpers = v.unite.helpers || [];
+      const groups = m.unitePlan.groups;
+      const activeIndex = m.unitePlan.activeGroup || 0;
+      const active = groups[activeIndex];
+      check(uf.length === 1, 'one active Unite field', `${at}: ${uf.length} fields`);
       check(uf.every((x) => x.players.length >= 1 && x.players.length <= 2), '1–2 helpers per 联防 field', `${at}: ${JSON.stringify(uf.map((x) => x.players))}`);
-      check(same(uf.map((x) => x.fieldId), uf.map((_, i) => (i === 0 ? 'u' : `u${i + 1}`))), '联防 field ids u, u2, …', `${at}: ${uf.map((x) => x.fieldId)}`);
-      check(same(sorted(helpers), sorted(v.unite.helpers || [])), 'unite.helpers = the 联防 fields\' players', `${at}: ${v.unite.helpers} vs ${helpers}`);
-      // fields = min(ceil(alive / 4), leakers, ceil(helpers / 2)); helpers: the top 2 × min(ceil(alive / 4), leakers)
-      // perfect players (2 while alive ≤ 4)
+      check(uf[0]?.fieldId === active?.fieldId && v.unite.activeFieldId === active?.fieldId, 'the active Unite stage matches its field', `${at}: ${uf[0]?.fieldId} vs ${v.unite.activeFieldId}`);
+      check(same(sorted(uf[0]?.players || []), sorted(active?.helpers.map(p => p.playerId) || [])), 'the active field uses its own helper group', at);
+      check(same(groups.map(g => g.fieldId), groups.map((_, i) => i === 0 ? 'u' : `u${i + 1}`)), 'planned Unite field ids u, u2, …', at);
+      check(same(sorted(groups.flatMap(g => g.helpers.map(p => p.playerId))), sorted(helpers)), 'unite.helpers lists all planned helpers', at);
       const perfect = m.alivePlayers().filter((ps) => {
         const r = m.lastResults && m.lastResults.get(ps.playerId);
         return r && !(r.leaked || []).some((l) => l && l.counted !== false) && r.perfect !== false;
       }).length;
-      const nLeakers = (v.unite.leakers || []).length;
-      const kk = Math.max(1, Math.min(ceilDiv(alive.length, 4), nLeakers));
-      check(helpers.length === Math.min(2 * kk, perfect), '联防 helpers = min(2 × min(ceil(alive / 4), leakers), perfect players)', `${at}: ${helpers.length} helpers, ${perfect} perfect, ${alive.length} alive`);
-      const wantFields = Math.min(kk, ceilDiv(helpers.length, 2));
-      check(uf.length === wantFields, '联防 fields = min(ceil(alive / 4), leakers, ceil(helpers / 2))', `${at}: ${uf.length} fields, ${helpers.length} helpers, ${nLeakers} leakers, ${alive.length} alive`);
-      if (alive.length <= 4) {
-        check(uf.length === 1, 'alive ≤ 4 → one 联防 field', `${at}: ${uf.length} fields`);
-        check(v.unite.fields === undefined, 'unite.fields only with several fields', `${at}: one field, ${alive.length} alive`);
+      const budget = ceilDiv(alive.length, 4);
+      check(helpers.length === Math.min(2 * budget, perfect), 'Unite helpers follow the alive-player budget and perfect-player count', `${at}: ${helpers.length} helpers, ${perfect} perfect, ${alive.length} alive`);
+      check(groups.length === Math.min(budget, ceilDiv(helpers.length, 2)), 'planned Unite stages follow the helper budget', `${at}: ${groups.length} stages for ${helpers.length} helpers`);
+      check(groups.every(g => same(sorted(g.leakers.map(p => p.playerId)), sorted(v.unite.leakers || []))), 'every stage retains original leaker ownership', at);
+      if (groups.length > 1) {
+        if (activeIndex > 0) seen.multiUnite++;
+        const fl = v.unite.fields;
+        check(Array.isArray(fl) && fl.length === groups.length, 'unite.fields lists planned helper stages', `${at}: ${JSON.stringify(fl)}`);
+        if (Array.isArray(fl)) fl.forEach((g, i) => {
+          check(g.fieldId === groups[i].fieldId, 'planned Unite stages retain field order', at);
+          check(same(sorted(g.helpers || []), sorted(groups[i].helpers.map(p => p.playerId))), 'planned stages use their own helper groups', at);
+          check(same(sorted(g.leakers || []), sorted(v.unite.leakers || [])), 'planned stages retain all original sources', at);
+        });
       } else {
-        const k = ceilDiv(alive.length, 4);
-        check(uf.length <= k, '联防 fields ≤ ceil(alive / 4)', `${at}: ${uf.length} fields for ${alive.length} alive`);
-        check(uf.length <= ceilDiv(helpers.length, 2), 'never a 联防 field without a helper', `${at}: ${uf.length} fields, ${helpers.length} helpers`);
-        check(helpers.length <= 2 * k, '联防 helpers ≤ 2 × ceil(alive / 4)', `${at}: ${helpers.length} helpers for ${alive.length} alive`);
-        if (uf.length > 1) {
-          seen.multiUnite++;
-          const fl = v.unite.fields;
-          check(Array.isArray(fl) && fl.length === uf.length, 'unite.fields lists every 联防 field', `${at}: ${JSON.stringify(fl)}`);
-          if (Array.isArray(fl)) {
-            const leakers = fl.flatMap((x) => x.leakers || []);
-            fl.forEach((x, i) => {
-              check(x.fieldId === uf[i]?.fieldId, 'unite.fields in field order', `${at}: ${x.fieldId} vs ${uf[i]?.fieldId}`);
-              check(same(sorted(x.helpers || []), sorted(uf[i]?.players || [])), 'unite.fields[].helpers = the field\'s players', `${at} ${x.fieldId}`);
-              check((x.leakers || []).length >= 1, 'every 联防 field has a leaker', `${at} ${x.fieldId}`);
-            });
-            check(same(sorted(leakers), sorted(v.unite.leakers || [])), 'every leaker on exactly one 联防 field', `${at}: ${JSON.stringify(fl.map((x) => x.leakers))} vs ${v.unite.leakers}`);
-            check(new Set(leakers).size === leakers.length, 'no leaker on two 联防 fields', `${at}: ${leakers}`);
-          }
-        } else {
-          check(v.unite.fields === undefined, 'unite.fields only with several fields', `${at}: one field, ${alive.length} alive`);
-        }
+        check(v.unite.fields === undefined, 'single Unite group omits the stage list', at);
       }
     }
     if ((v.phase === PHASE.FINAL_ASSAULT || v.phase === PHASE.HIDDEN_CORE) && v.bossHp) {

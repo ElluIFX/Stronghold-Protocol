@@ -14,6 +14,7 @@
 // the process-wide getData() singleton).
 
 import { ROOT, DATA_DIR, readDataDirectory } from './data-node.js';
+import { operatorBalanceFile } from '../shared/operatorBalance.js';
 export { ROOT, DATA_DIR };
 
 /** Files the game expects (a warning lists the missing ones). */
@@ -50,6 +51,7 @@ export function deepFreeze(root) {
  */
 export function loadData(dir = DATA_DIR, { log = console, expected = DATA_FILES } = {}) {
   const out = readDataDirectory(dir, log);
+  for (const name of ['chess', 'backups']) if (out[name]) out[name] = operatorBalanceFile(name, out[name]);
   const missing = expected.filter((k) => !(k in out));
   if (missing.length) log.warn(`[data] missing data files: ${missing.map((k) => k + '.json').join(', ')}`);
   return deepFreeze(out);
