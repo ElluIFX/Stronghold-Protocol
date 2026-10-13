@@ -32,7 +32,8 @@
 //   act2autochess_band3_buff  伊奥莱塔 统御号令 at combat start n = elite operators on the field ⇒ every elite operator
 //                                               ATK +atk_per_cnt × n, HP +max_hp_per_cnt × n (all 直接乘算)
 //   auto_chess_change_map     Touch 外勤医疗    "所有玩家场地上出现一名<预备干员-医疗>": while any alive player of the match
-//                                               holds band_amedic, every player's field gets the map character of the
+//                                               holds band_amedic, every player's field gets one map character; each
+//                                               additional holder adds 25% HP, ATK and DEF. The character is the
 //                                               variant whose common_condition holds for that player's elites on the field
 //                                               (condition_golden_chess_le cnt → 预备干员-医疗, _ge cnt → Touch), spawned at
 //                                               combat start on its stage slot (tokens.spawnMapChar)
@@ -44,6 +45,7 @@ import {
 } from '../support/index.js';
 import { weaknessRetype, addShieldLayer, PRIO_RESPAWN, reviveNow } from '../items/battle.js';
 import { spawnMapChar } from '../tokens.js';
+import { amedicStatMultiplier } from '../../../../shared/bandModifiers.js';
 
 export const AMEDIC_BAND = 'band_amedic';
 /**
@@ -235,14 +237,21 @@ export function amedicCharsFor(elites, variants = amedicVariants()) {
 function installMapChars(battle) {
   const variants = amedicVariants();
   if (!variants.length) return;
-  const holders = battle.players.filter((ps) => matchBands(battle, ps.playerId).includes(AMEDIC_BAND));
+  const holders = battle.players.filter((ps) => amedicStatMultiplier(matchBands(battle, ps.playerId)) > 0);
   if (!holders.length) return;
   battle.on('battleStart', () => {
     for (const ps of holders) {
       const elites = deployedOps(battle, ps.playerId).filter(isElite).length;
+      const multiplier = amedicStatMultiplier(matchBands(battle, ps.playerId));
       for (const id of amedicCharsFor(elites, variants)) {
         const u = spawnMapChar(battle, ps.playerId, id);
-        if (u) fxOn(battle, 'summon', u, keyOf(AMEDIC_BAND), AMEDIC_BAND);
+        if (u) {
+          if (multiplier > 1) {
+            passiveBuff(battle, u, keyOf(AMEDIC_BAND), { atkMul: multiplier, defMul: multiplier, hpMul: multiplier });
+            u.hp = u.s.maxHp;
+          }
+          fxOn(battle, 'summon', u, keyOf(AMEDIC_BAND), AMEDIC_BAND);
+        }
       }
     }
   });

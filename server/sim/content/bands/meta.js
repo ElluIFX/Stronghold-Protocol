@@ -473,9 +473,8 @@ const duckGlobal = {
     if (!ev || !DUCK_KINDS.has(ev.kind) || !Array.isArray(ev.spawns)) return;
     const p = duckParams();
     if (!p || ctx.round < int(p.round, 1)) return;
-    const held = ctx.bandId() === DUCK_BAND || ctx.teammates().some((t) => t.bandId() === DUCK_BAND);
-    if (!held) return;
-    duckReplace(ctx, ev.spawns, p, ctx.playerId, { routes: ev.routes, side: ev.side });
+    const count = Number(ctx.bandId() === DUCK_BAND) + ctx.teammates().filter((t) => t.bandId() === DUCK_BAND).length;
+    for (let i = 0; i < count; i++) duckReplace(ctx, ev.spawns, p, ctx.playerId, { routes: ev.routes, side: ev.side });
   },
 };
 

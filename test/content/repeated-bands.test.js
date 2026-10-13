@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { makeMatch } from '../match/harness.js';
+import { amedicStatMultiplier } from '../../shared/bandModifiers.js';
 
 const unit = (uid = 1) => ({ uid, kind: 'chess', chessId: 'repeat_op', row: 10, col: 4 });
 const player = (playerId, seat, bandId, extra = {}) => ({
@@ -63,10 +64,19 @@ test('eight repeated Touch strategies spawn one medic per normal field and one p
     return ev.input;
   };
   const medics = (b) => b.allyUnits.filter((u) => u.kind === 'token' && u.defId === 'char_605_cmedic');
+  const base = makeBattle({ stageId: h.m.stageId, autoFinish: false,
+    players: [{ ...input(players[0], 'L', 0, 'normal'), contentInfo: { matchBands: ['band_amedic'] } }] });
+  base.step();
+  const stats = medics(base.b)[0].s;
   for (const ps of players) {
     const f = makeBattle({ stageId: h.m.stageId, autoFinish: false, players: [input(ps, 'L', 0, 'normal')] });
     f.step();
     assert.deepEqual(medics(f.b).map((u) => [u.ownerId, u.tileR, u.tileC]), [[ps.playerId, 10, 2]]);
+    const medic = medics(f.b)[0];
+    for (const key of ['maxHp', 'atk', 'def']) assert.equal(medic.s[key], stats[key] * 2.75, key);
+    assert.equal(medic.hp, medic.s.maxHp);
+    assert.equal(ps.privateView().prepMapChars[0].maxHp, medic.s.maxHp);
+    assert.equal(h.m.prepFieldMeta(ps).units.find((u) => u.defId === 'char_605_cmedic').maxHp, medic.s.maxHp);
     checkInvariants(f.b);
   }
   for (let i = 0; i < players.length; i += 2) {
@@ -76,6 +86,71 @@ test('eight repeated Touch strategies spawn one medic per normal field and one p
     f.step();
     assert.deepEqual(medics(f.b).map((u) => [u.ownerId, u.tileR, u.tileC]),
       [[pair[0].playerId, 3, 2], [pair[1].playerId, 3, 18]]);
+    assert.notEqual(medics(f.b)[0].id, medics(f.b)[1].id);
+    for (const medic of medics(f.b)) for (const key of ['maxHp', 'atk', 'def']) assert.equal(medic.s[key], stats[key] * 2.75);
     checkInvariants(f.b);
   }
+  players[7].alive = false;
+  assert.equal(amedicStatMultiplier(players.filter((p) => p.alive).map((p) => p.bandId)), 2.5);
+  assert.equal(players[0].privateView().prepMapChars[0].maxHp, stats.maxHp * 2.5);
+  assert.deepEqual(players[7].privateView().prepMapChars, []);
+  const reduced = { input: players[0].battleInput(), kind: 'normal', round: 1 };
+  h.m.dispatch(players[0], 'onBattleStart', reduced);
+  const after = makeBattle({ stageId: h.m.stageId, autoFinish: false, players: [reduced.input] });
+  after.step();
+  assert.equal(medics(after.b)[0].s.maxHp, stats.maxHp * 2.5);
+  h.m.dispose();
+});
+
+test('Touch stat scaling preserves each owner elite variant, skill state and battle timing', () => {
+  const elite = chessRec({ id: 'elite_b', golden: true });
+  const h = makeBattle({ stageId: 'act2autochess_m01', kind: 'unite', autoFinish: false,
+    defs: { chess: { elite_b: elite } }, players: [
+      player('p1', 0, 'band_amedic', { units: [1, 2].map((uid) => ({ uid, chessId: 'elite_b', row: 9 + uid, col: 4 })) }),
+      player('p2', 1, 'band_amedic', { units: [] }),
+    ] });
+  h.step();
+  const [touch, reserve] = h.b.allyUnits.filter((u) => u.kind === 'token');
+  assert.deepEqual([touch.defId, reserve.defId], ['char_613_acmedc', 'char_605_cmedic']);
+  assert.deepEqual([touch.tileR, touch.tileC, reserve.tileR, reserve.tileC], [10, 2, 10, 10]);
+  assert.notEqual(touch.skill, reserve.skill);
+  const sp = reserve.skill.sp;
+  touch.skill.gainSp(10, 'test');
+  assert.equal(reserve.skill.sp, sp);
+  assert.equal(touch.s.maxHp, touch.base.maxHp * 1.25);
+  assert.equal(reserve.s.maxHp, reserve.base.maxHp * 1.25);
+  const baseline = makeBattle({ stageId: 'act2autochess_m01', kind: 'unite', autoFinish: false,
+    defs: { chess: { elite_b: elite } },
+    players: h.b.players.map((p) => ({ ...p.input, contentInfo: { matchBands: ['band_amedic'] } })),
+  });
+  baseline.step();
+  const plain = baseline.b.allyUnits.filter((u) => u.kind === 'token');
+  for (const [i, u] of [touch, reserve].entries()) {
+    assert.ok(u.skill.activate('test', { free: true }));
+    assert.ok(plain[i].skill.activate('test', { free: true }));
+    for (const key of ['maxHp', 'atk', 'def']) assert.ok(Math.abs(u.s[key] - plain[i].s[key] * 1.25) < 1e-6, key);
+    assert.equal(u.skill.spec.duration, plain[i].skill.spec.duration);
+    assert.equal(u.s.bat, plain[i].s.bat);
+    assert.equal(u.s.spRecovery, plain[i].s.spRecovery);
+  }
+  checkInvariants(h.b);
+});
+
+test('eight Touch holders increase the actual first healing action by 2.75 while keeping attack timing', () => {
+  const run = (count) => {
+    const h = makeBattle({ stageId: 'act2autochess_m01', autoFinish: false,
+      defs: { chess: { patient: chessRec({ id: 'patient', stats: { maxHp: 100000 } }) } },
+      players: [player('p1', 0, 'band_amedic', {
+        units: [{ uid: 1, chessId: 'patient', row: 10, col: 4 }],
+        contentInfo: { matchBands: Array(count).fill('band_amedic') },
+      })] });
+    h.step();
+    const patient = h.unit('patient');
+    patient.hp = 1000;
+    assert.ok(h.runUntil(() => patient.hp > 1000, 4));
+    return { healed: patient.hp - 1000, time: h.b.time };
+  };
+  const normal = run(1), boosted = run(8);
+  assert.ok(Math.abs(boosted.healed - normal.healed * 2.75) < 1e-6);
+  assert.equal(boosted.time, normal.time);
 });
