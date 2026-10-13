@@ -1,6 +1,4 @@
-// 限伤 on screen (docs/research/11-limits-official.md §2, DESIGN §20.12): a leader's hit of ≥ 300000 in a boss battle
-// is cancelled by the sim (server/sim/damage.js leaderHitCancelled), which emits ['fx', 'hitCap', x, y, { id, n }] and
-// no 'dmg' event. The official shows no number for it [ASSUMED]; the renderer draws nothing for the event.
+// The hitCap marker adds no effect. The capped hit's ordinary damage event supplies its damage number.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,7 +28,7 @@ test('hitCap: listed in FX_KINDS as a kind that draws nothing', () => {
 test('hitCap: simFx draws nothing (no number, no spark); an unknown kind still gets its generic sparkle', () => {
   const { fx, calls } = recordingFx();
   fx.simFx('hitCap', 10, 3, { id: 7, n: 412345 });
-  assert.deepEqual(calls, [], 'nothing drawn for a cancelled leader hit');
+  assert.deepEqual(calls, [], 'the marker adds no effect');
   fx.simFx('zzzUnknownKind', 10, 3, {});
   assert.ok(calls.includes('particle'), 'the generic sparkle still works');
 });

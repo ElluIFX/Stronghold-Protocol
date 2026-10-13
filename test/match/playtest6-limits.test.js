@@ -116,31 +116,24 @@ test('invariants: a bond above 999 is a violation (no writer may pass the cap)',
 // ---- a real Final Assault (and Hidden Core) with a 999-layer board ----------------------------------------------
 
 const YAN = ['chess_char_6_15_a', 'chess_char_5_12_a', 'chess_char_4_17_a', 'chess_char_3_03_a'];
-/** Every enemy takes ×K damage — a stand-in for the 999-layer debuffs of a real board (谢拉格 ×11.34 vs cold / frozen,
- * 奥术 ×11.19 arts taken): with 炎 at 999 (ATK ×10.22) the hits land far past 300000. Once `relentAfter` leader hits
- * were cancelled the leaders lose the stand-in so the fight can finish. */
+/** Every enemy takes ×K damage, representing a heavily amplified 999-layer board. With 炎 at 999 (ATK ×10.22),
+ * leader hits exceed 300000 and must still deal their capped damage throughout both final battles. */
 const K = 2000;
-function limitBattleClass(log, relentAfter = 6) {
+function limitBattleClass(log) {
   return class extends Battle {
     constructor(opts) {
       const user = opts.setup;
       super({ ...opts, setup: (b) => {
         if (typeof user === 'function') user(b);
         if (b.kind !== 'boss' && b.kind !== 'hidden') return;
-        const rec = { kind: b.kind, battle: b, caps: [], leaderHits: [], credits: [], relented: false };
+        const rec = { kind: b.kind, battle: b, caps: [], leaderHits: [], credits: [] };
         log.push(rec);
         const fx0 = b.fx.bind(b);
         b.fx = (k, p) => {
-          if (k === 'hitCap') {
-            rec.caps.push(p.n);
-            if (!rec.relented && rec.caps.length >= relentAfter) {
-              rec.relented = true;
-              b.after(0, () => { for (const e of b.enemies) if (e.isBoss) b.removeBuff(e, 'test:999debuffs'); });
-            }
-          }
+          if (k === 'hitCap') rec.caps.push(p.n);
           return fx0(k, p);
         };
-        b.on('enemySpawn', ({ enemy }) => { if (!(enemy.isBoss && rec.relented)) b.addBuff(enemy, { key: 'test:999debuffs', mods: { dmgTakenMul: K } }); });
+        b.on('enemySpawn', ({ enemy }) => { b.addBuff(enemy, { key: 'test:999debuffs', mods: { dmgTakenMul: K } }); });
         b.on('damaged', (c) => {
           if (!c.target || !c.target.isBoss || c.type === 'element') return;
           rec.leaderHits.push(c.amount);
@@ -155,12 +148,12 @@ function limitBattleClass(log, relentAfter = 6) {
   };
 }
 
-test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-run): every leader hit of ≥ 300000 deals 0 and nothing of it reaches the pool; the hits under the line win', () => {
+test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-run): amplified leader hits deal up to 300000 and empty the shared pools', () => {
   const h = makeMatch({ mode: 'solo', difficulty: 'HARD', seed: 76, fake: true, captureFrames: false, script: (b) => (b.kind === 'normal' ? { duration: 1 } : {}) });
   const m = h.m;
   m.bossId = 'boss_6';       // 阿利斯泰尔 walks into the board
   m.hiddenBossId = 'boss_9'; // 假想敌：铳 (完全形态) with its three springs
-  m.gd.bossHpMul = () => 0.1; // pools the 4-operator board clears once the stand-in debuff leaves the leaders
+  m.gd.bossHpMul = () => 0.1; // pools the four-operator board can clear with capped damage
   h.start();
   h.toPrep(14);
   const ps = h.ps('p_0');
@@ -185,7 +178,7 @@ test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-r
   h.drive(() => h.ended != null, { maxSteps: 8e6 }); // the Final Assault, the Hidden Core's prep (999 activated layers > 350) and fight
   const end = h.ended;
   assert.ok(end, `the match ended (${m.phase} R${m.round})`);
-  assert.ok(log.length >= 1, 'a real boss field ran');
+  assert.deepEqual(log.map((rec) => rec.kind), ['boss', 'hidden'], 'both final battles ran with capped damage');
   const fa = log[0];
   assert.equal(fa.kind, 'boss');
   const input = fa.battle.getPlayer('p_0');
@@ -193,15 +186,18 @@ test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-r
   const op = fa.battle.allyUnits.find((u) => u.kind === 'op' && u.defId === YAN[0]);
   assert.ok(op, 'the operator fought');
   for (const rec of log) {
-    assert.ok(rec.caps.length > 0, `${rec.kind}: hits past the line were cancelled (${rec.caps.length})`);
-    assert.ok(rec.caps.every((n) => n >= BOSS_HIT_LIMIT));
-    assert.ok(rec.leaderHits.every((a) => Math.ceil(a) < BOSS_HIT_LIMIT), `${rec.kind}: no leader hit of ≥ 300000 landed (max ${Math.max(0, ...rec.leaderHits)})`);
-    assert.ok(rec.credits.every((a) => a < BOSS_HIT_LIMIT), `${rec.kind}: nothing ≥ 300000 reached the shared pool`);
-    assert.ok(rec.leaderHits.length > 0, `${rec.kind}: hits under the line landed`);
-    assert.equal(rec.battle.sharedBoss.hp, 0, `${rec.kind}: the pool was emptied by those`);
+    assert.ok(rec.caps.length > 0, `${rec.kind}: amplified hits were capped (${rec.caps.length})`);
+    assert.ok(rec.caps.every((n) => n > BOSS_HIT_LIMIT));
+    assert.ok(rec.leaderHits.every((a) => a <= BOSS_HIT_LIMIT), `${rec.kind}: leader damage stays within the cap (max ${Math.max(0, ...rec.leaderHits)})`);
+    assert.ok(rec.leaderHits.includes(BOSS_HIT_LIMIT), `${rec.kind}: damaged hooks receive capped hits`);
+    assert.ok(rec.credits.every((a) => a <= BOSS_HIT_LIMIT), `${rec.kind}: each shared-pool hit stays within the cap`);
+    assert.ok(rec.credits.includes(BOSS_HIT_LIMIT), `${rec.kind}: capped hits reach the shared pool`);
+    assert.ok(rec.battle._pp('p_0').damageDealt > 0, `${rec.kind}: capped hits contribute damage statistics`);
+    assert.ok(rec.battle._pp('p_0').bossDamage > 0, `${rec.kind}: capped hits contribute boss-damage statistics`);
+    assert.equal(rec.battle.sharedBoss.hp, 0, `${rec.kind}: capped hits empty the pool`);
     assert.equal(rec.battle.reason, 'cleared');
   }
-  assert.equal(end.victory, true, 'the board still won once its hits stayed under the line');
+  assert.equal(end.victory, true, 'the amplified board wins with capped hits');
   assert.equal(m.errorCount, 0);
   m.dispose();
 });

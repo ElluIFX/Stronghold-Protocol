@@ -7,7 +7,7 @@
 // the end in Node and in headless Chrome through the client's own loader (public/js/battle/runner.js loadBrowserSim)
 // with the field's LocalBossPool, and must give the same result digest, the same pool and the same fx per kind.
 // The fields exercise the playtest-6b sim paths: 直接乘算 bonus sums (§20.10), one 奥术 instance per target
-// (applyStrongest), the drone 2 % links and the 剑 / 锤 / shell kit (§20.13), and 限伤 cancels (fx 'hitCap', §20.12).
+// (applyStrongest), the drone 2 % links and the 剑 / 锤 / shell kit (§20.13), and 300000-damage clamps (fx 'hitCap').
 // 瘫痪 (fx 'palsy': a 麻痹 stack interrupts an enemy attack) is checked on the same four specs with a golden 催泪瓦斯 in
 // every operator's second slot (withTearGas), compared Chrome vs Node like the others: the bots' only 麻痹 had been one
 // 5 % 催泪瓦斯 on one operator — a single hit at 0.1.4, none since 0.2.0's enemy damage frame (WE1) re-timed every fight.
@@ -15,7 +15,7 @@
 // fixed board of 999-layer heavy hitters
 // (withHeavyHitters): the bots' own hits of ≥ 300000 came from whatever 维多利亚 / 精准 / 奥术 mix they drafted — none
 // since 0.2.0's CB3 (the 受到攻击时 counters answer every damage instance) re-drafted seed 22, whose best hit is now
-// about half the limit; the cancel path itself is unchanged (the earlier captures still cancel the same hits).
+// about half the limit; the heavy-hitter copy exercises capped hits throughout each field.
 // 无来源 HP (drone 死亡集群 links and 剑 / 锤 transfers) likewise, on a fourth copy (withTransferWindow). Shared co-op
 // stock (DESIGN §29.8) re-drafted seed 22: the 999-layer boards now clear in tens of seconds, before a drone is killed
 // on every field and before a blade takes a transferable hit (a forced replace is not damage). The transfer path is
@@ -150,7 +150,12 @@ function runField(S, ds, spec, maxSeconds) {
   const fx0 = b.fx.bind(b);
   b.fx = (k, p) => { fx[k] = (fx[k] || 0) + 1; return fx0(k, p); };
   let hpLoss = 0;
-  b.on('damaged', (c) => { if (c.target && c.target.isBoss && c.dmg && c.dmg.tags && c.dmg.tags.includes('hpLoss')) hpLoss++; }, { priority: -1e9 });
+  let cappedLeaderHits = 0;
+  b.on('damaged', (c) => {
+    if (!c.target || !c.target.isBoss) return;
+    if (c.dmg && c.dmg.tags && c.dmg.tags.includes('hpLoss')) hpLoss++;
+    if (c.amount === 300000) cappedLeaderHits++;
+  }, { priority: -1e9 });
   let maxArcane = 0;
   b.on('tick', () => {
     for (const e of b.enemies) {
@@ -161,7 +166,7 @@ function runField(S, ds, spec, maxSeconds) {
   });
   const r = b.runToEnd(maxSeconds);
   const d = S.resultDigest(r);
-  return { hash: d.hash, json: d.json, reason: r ? r.reason : null, poolHp: b.sharedBoss ? b.sharedBoss.hp : null, fx, hpLoss, maxArcane };
+  return { hash: d.hash, json: d.json, reason: r ? r.reason : null, poolHp: b.sharedBoss ? b.sharedBoss.hp : null, fx, hpLoss, cappedLeaderHits, maxArcane };
 }
 
 describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () => {
@@ -211,6 +216,7 @@ describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () =
       assert.equal(chrome[i].poolHp, node[i].poolHp, `${at}: same local pool`);
       assert.deepEqual(chrome[i].fx, node[i].fx, `${at}: same fx per kind`);
       assert.equal(chrome[i].hpLoss, node[i].hpLoss, `${at}: same 无来源 HP losses on the leader`);
+      assert.equal(chrome[i].cappedLeaderHits, node[i].cappedLeaderHits, `${at}: same capped leader hits`);
       assert.ok(node[i].maxArcane <= 1, `${at}: one 奥术 instance on the leader at a time (${node[i].maxArcane})`);
     });
     const real = node.slice(0, specs.length);
@@ -218,7 +224,8 @@ describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () =
     const heavy = node.slice(2 * specs.length, 3 * specs.length);
     const opened = node.slice(3 * specs.length);
     const sum = (rows, k) => rows.reduce((a, r) => a + (r.fx[k] || 0), 0);
-    assert.ok(sum(heavy, 'hitCap') >= 1, `a 999-layer hit reached 300000 and was cancelled (限伤: ${heavy.map((r) => r.fx.hitCap || 0)} with the heavy hitters, ${sum(real, 'hitCap')} on the bots' own boards)`);
+    assert.ok(sum(heavy, 'hitCap') >= 1, `a 999-layer hit exceeded 300000 and was clamped (限伤: ${heavy.map((r) => r.fx.hitCap || 0)} with the heavy hitters, ${sum(real, 'hitCap')} on the bots' own boards)`);
+    assert.ok(heavy.some((r) => r.cappedLeaderHits >= 1), 'heavy-hitter damage reaches leader damaged hooks at the 300000 cap');
     assert.ok(sum(gassed, 'palsy') >= 1, `瘫痪 occurred with the 催泪瓦斯 (${gassed.map((r) => r.fx.palsy || 0)})`);
     assert.ok(opened.every((r) => r.hpLoss >= 1), `holding the damage bonds at 1 layer, every field cost the leader 无来源 HP (drone links / 剑 · 锤 transfers: ${opened.map((r) => r.hpLoss)}; the 999-layer boards: ${real.map((r) => r.hpLoss)})`);
     // 奥术 on the bots' own boards or on the heavy-hitter copy (洛洛 + 深靛 = 奥术 2): seed 22's bots stopped drafting it
