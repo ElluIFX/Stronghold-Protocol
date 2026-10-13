@@ -48,6 +48,7 @@
 //        no pinch — like a battle unit's pick on a touch screen (DESIGN §F2.1)
 //        tileHover { row, col, area, idx } | null (while dragging: the drop target — the tile under the pointer)
 //   view.pieceScreenRect(uid) → { left, top, right, bottom, width, height, x, y } (client px: the drawn body) | null
+//                               (null also until the piece is first drawn)
 // Picking (user playtest #4 item 1: the ground is drawn as tiles — a press on a tile is a press on the unit standing
 // there): every "which unit is under the pointer" — prep press / click / detail / drag start / hover (pieceAt), battle
 // clicks and hover (battleUnitAt), the pen (penUnitAt) — is render/pick.js over the tile under the pointer (groundTile:
@@ -62,7 +63,8 @@
 //   view.holdPiece(uid, {row,col} | null)       keep a dropped prep piece standing on a tile while its direction is
 //                                               chosen / the move is in flight (null releases; setPrep then settles it)
 //   view.setPieceDir(uid, dir)                  show a prep piece facing UP|RIGHT|DOWN|LEFT (wheel preview / stored dir)
-//   view.setSettings({ damageNumbers, quality: 'high'|'medium'|'low' }) ; view.resize() ; view.destroy()
+//   view.setSettings({ damageNumbers, ammoCount, quality: 'high'|'medium'|'low' }) ; view.resize() ; view.destroy()
+//                                               (ammoCount: 设置「弹药数量」, the count under an ammo skill's bar — PR #552)
 //   view.stats() → { fps, frameMs, cpuMs, renderMs, units, particles, impostor, impostorAtlas, boardArt, … } (dev / perf)
 //
 // Enemy preview pen (research 09 §2.2 / 08 §4.2, render/pen.js): in prep the next round's enemies idle in the pen
@@ -113,7 +115,8 @@
 // Assault prep = the boss field).
 // Battle device boxes (`ctx.createBox`) follow the board layer (switchableBox), so a 3D ⇄ 2D switch keeps crates.
 // Crowds and clipped Spine skeletons render through the shared impostor atlas (render/impostor.js), flushed once per
-// frame before the main pass.
+// frame before the main pass; each frame also measures queued Spine clips within a small time budget
+// (spine.js stepClipBounds: the impostor boxes, GitHub #542).
 // canPlace: `(uid, target, piece) => bool` (the game UI's form: target = {area:'board',row,col}|{area:'hand',idx})
 // or `(piece, row, col, target) => bool` (functions declaring ≥ 3 parameters). Throwing ⇒ illegal.
 // Piece shape (DESIGN §8.3): { uid, kind: 'chess'|'item'|'token', id, golden, tier, items: [{uid,id}], count, ownerUid }.
@@ -135,7 +138,8 @@ import { backdropTextures, shadowTexture, refreshTierChips, refreshDownLabels, s
 import { TILE_H, TIER_COLORS, COLORS } from './style.js';
 import { loadBoardArt } from './boardArt.js';
 import { ImpostorAtlas } from './impostor.js';
-import { loadThree, loadBoardPack, webgl2Available, boardArtListed } from './board3d/load.js';
+import { stepClipBounds } from './spine.js';
+import { loadThree, loadBoardPack, loadScenePack, webgl2Available, boardArtListed } from './board3d/load.js';
 import { BoardScene } from './board3d/scene.js';
 import { unionAreas } from './board3d/layout.js';
 import { layoutPen, penSignature } from './pen.js';
@@ -160,7 +164,7 @@ export { releaseGl } from './app/host.js';
 /**
  * Create the battlefield view inside `host` (an element sized by CSS; the canvas fills it).
  * @param {HTMLElement} host
- * @param {{ data?: any, assets?: any, audio?: any, settings?: { damageNumbers?: boolean, quality?: string }, signal?: AbortSignal,
+ * @param {{ data?: any, assets?: any, audio?: any, settings?: { damageNumbers?: boolean, ammoCount?: boolean, quality?: string }, signal?: AbortSignal,
  *           padding?: object|((kind:string, size:{width:number,height:number}) => object),
  *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}, o:{shop:boolean}) => {top:number,bottom:number}|null) }} [opts]
  */
@@ -179,7 +183,7 @@ export async function createFieldView(host, options = {}) {
   const waitFor = (ms) => Math.max(0, Math.min(ms, waitUntil - performance.now()));
   const assets = resolveAssets(opts.assets);
   const data = makeData(opts.data);
-  const settings = { damageNumbers: true, quality: 'high', ...(opts.settings || {}) };
+  const settings = { damageNumbers: true, ammoCount: false, quality: 'high', ...(opts.settings || {}) };
   // the 3D board (three.js + the official art) loads in parallel with everything else
   const boardPref = boardPreference(opts.board);
   const want3d = boardPref !== '2d' && webgl2Available(boardPref === '3d');
@@ -207,6 +211,12 @@ export async function createFieldView(host, options = {}) {
   let view = null;
   let onAbort;
   try {
+  // a vertex buffer of its own for every batch flush of a frame (PIXI's own setting on iOS) instead of uploading the one
+  // shared buffer again: the impostor atlas flushes once per redrawn slot (render/impostor.js: each slot is clipped by its
+  // own scissor rect, GitHub #542), and with those flushes the re-uploads stalled Apple GPUs — on an Apple M4 (Chrome,
+  // ANGLE Metal) a 120-unit crowd at 1920 × 1080 ran at 42–58 fps instead of 60 (DPR 1 and 2, by the machine's load);
+  // a buffer per flush costs ≈ 0.3 ms of render CPU there
+  if (P.BatchRenderer && 'canUploadSameBuffer' in P.BatchRenderer) P.BatchRenderer.canUploadSameBuffer = false;
   const app = new P.Application({
     // MSAA only where it pays: dense (DPR ≥ 1.5) screens are sharp enough without it and it would cost 4× the fill
     // transparent: the 3D board canvas shows through (the 2D board paints an opaque backdrop itself)
@@ -392,6 +402,14 @@ export async function createFieldView(host, options = {}) {
   // lost-context recovery: the THREE module + art pack of the last 3D board, the pending retry, failures so far
   const recover = { THREE: null, pack: null, timer: 0, tries: 0, since: 0, off: false, count: 0 };
   setupCleanup.push(() => { clearTimeout(recover.timer); disable3d(); });
+  /** The stage's official scene, once loaded (the procedural board shows meanwhile and when there is none). */
+  function useOfficialScene(st) {
+    const id = st && typeof st.id === 'string' ? st.id : '';
+    if (!id || !board3d) return;
+    loadScenePack(assets, id).then((scene) => {
+      if (scene && !destroyed && board3d && stageRec && stageRec.id === id) board3d.setScenePack(id, scene);
+    }).catch(() => {});
+  }
   function enable3d(THREE, pack) {
     if (destroyed || board3d || !THREE || !pack) return false;
     recover.THREE = THREE; recover.pack = pack;
@@ -411,7 +429,7 @@ export async function createFieldView(host, options = {}) {
       tiles.setExternal(true);
       backdrop.visible = false;
       b.setArea(boardArea(viewKind(camKind, camOpts)));
-      if (stageRec) b.setStage(stageRec);
+      if (stageRec) { b.setStage(stageRec); useOfficialScene(stageRec); }
       b.setFocus(camRect());
       b.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null);
       tiles.project(cam, true);
@@ -660,7 +678,7 @@ export async function createFieldView(host, options = {}) {
     stageRec = st;
     tiles.setStage(st);
     tiles.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null);
-    if (board3d) { board3d.setStage(st); board3d.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null); }
+    if (board3d) { board3d.setStage(st); board3d.setBattleRect(mode === 'battle' && battleMeta ? battleMeta.rect : null); useOfficialScene(st); }
     tiles.project(cam, true);
     // a pen laid out before the stage arrived (setPrep / a scouting board first) used the default zones and the old
     // tile heights: lay it out again on this stage
@@ -1902,6 +1920,7 @@ export async function createFieldView(host, options = {}) {
       if (leader && !leaderHidden) leader.view.update(dt, cam, clock);
       tiles.update(bdt);
       fx.update(bdt);
+      stepClipBounds();
       impostors.flush();
     } catch (err) {
       if (!frame.warned) { frame.warned = true; console.error('[render] frame failed', err); }
@@ -2027,7 +2046,8 @@ export async function createFieldView(host, options = {}) {
     pieceScreenRect(uid) {
       let v = views.get('p:' + uid);
       if (!v) for (const x of views.values()) if (x.uid === uid || x.info?.uid === uid || x.id === uid) { v = x; break; }
-      if (!v || v.destroyed) return null;
+      // a view built this frame is placed by its first update: before that its screen record is still (0, 0)
+      if (!v || v.destroyed || !v.placed) return null;
       const b = v.bounds();
       const r = canvas.getBoundingClientRect();
       const left = r.left + b.x, top = r.top + b.y;
@@ -2082,6 +2102,7 @@ export async function createFieldView(host, options = {}) {
       if (!s || typeof s !== 'object') return;
       const q = settings.quality;
       if (typeof s.damageNumbers === 'boolean') settings.damageNumbers = s.damageNumbers;
+      if (typeof s.ammoCount === 'boolean') settings.ammoCount = s.ammoCount;   // the units read it every frame (ctx.settings)
       if (s.quality === 'high' || s.quality === 'medium' || s.quality === 'low') settings.quality = s.quality;
       if (q !== settings.quality) { board3d?.setQuality?.(settings.quality); resize(); }
     },

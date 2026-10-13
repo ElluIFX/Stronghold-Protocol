@@ -175,13 +175,13 @@ test('buy → 3 copies merge into the elite (the stock pays the copies); sell / 
   p0.shop.slots[0] = { kind: 'chess', id: T5A, basePrice: 4, frozen: false, sold: false };
   assert.equal(m.handle('p_0', { t: 'g.buy', slot: 0 }).error, 'SOLD_OUT');
   h.invariants();
-  // reward offers (the temporary refresh) draw it once the 调度中心 is at the slot's level
+  // Promotion rewards include DIY pieces at the reward tier, one shop level before ordinary shop availability.
   clear(p0);
   p0.offers = [];
   let hit = 0;
   p0.shop.level = 4;
   for (let i = 0; i < 200; i++) { const o = p0.pushRewardOffer('merge'); if (o && o.slots.some((s) => /_diy/.test(s.id))) hit++; p0.offers = []; }
-  assert.equal(hit, 0, 'a level-4 promotion reward (tier 5) never holds a tier-5 自选 piece');
+  assert.ok(hit > 0, 'a level-4 promotion reward (tier 5) can hold a tier-5 自选 piece');
   p0.shop.level = 6;
   for (let i = 0; i < 300; i++) { const o = p0.pushRewardOffer('merge'); if (o && o.slots.some((s) => s.id === T6A)) hit++; p0.offers = []; }
   assert.ok(hit > 0, 'a level-6 reward can hold the tier-6 piece');
@@ -190,6 +190,54 @@ test('buy → 3 copies merge into the elite (the stock pays the copies); sell / 
   p0.eliminate(m.round);
   assert.deepEqual(p0.diyStock.snapshot(), { [T5A]: 8, [T5B]: 8, [T6A]: 5 });
   m.dispose();
+});
+
+test('promotion rewards include exhausted DIY stock at the reward tier; ordinary shops retain their level and stock gates', REAL, () => {
+  const h = diyMatch().start();
+  const p0 = h.ps('p_0');
+  try {
+    h.toPrep(1);
+    for (const [id, e] of p0.diyStock.entries) assert.equal(p0.diyStock.take(id, e.cap), e.cap);
+    assert.ok([...p0.diyStock.entries.values()].every((e) => e.left === 0));
+    const rewardIds = (level) => {
+      p0.shop.level = level;
+      const ids = new Set();
+      for (let i = 0; i < 300; i++) {
+        const offer = p0.pushRewardOffer('merge');
+        for (const s of offer?.slots || []) ids.add(s.id);
+        p0.offers = [];
+      }
+      return ids;
+    };
+    const lv3 = rewardIds(3);
+    assert.ok(![...lv3].some((id) => /_diy/.test(id)), 'tier-4 rewards contain no DIY slots');
+    const lv4 = rewardIds(4);
+    assert.ok(lv4.has(T5B), 'tier-5 DIY can be offered at shop level 4 with no purchase copies');
+    assert.ok(!lv4.has(T6A), 'tier-6 DIY stays above the reward tier');
+    const lv5 = rewardIds(5);
+    assert.ok(lv5.has(T6A), 'tier-6 DIY can be offered at shop level 5 with no purchase copies');
+    assert.ok(!lv5.has(T5B), 'available tier-6 identities fill the offer');
+    p0.offers = [];
+    const offer = p0.pushRewardOffer('merge', { ids: [T6A] });
+    assert.equal(offer.slots[0].id, T6A);
+    assert.deepEqual(h.m.handle('p_0', { t: 'g.reward', idx: 0 }), { ok: true });
+    assert.equal(p0.allChess().find((p) => p.id === T6A).poolCopies, 0);
+    assert.equal(p0.diyStock.left(T6A), 0, 'a free pick consumes no purchase copies');
+    for (const level of [4, 5, 6]) {
+      p0.shop.level = level;
+      for (let i = 0; i < 100; i++) {
+        p0.rollShop();
+        assert.ok(!p0.shop.slots.some((s) => s && /_diy/.test(s.id)), 'exhausted slots stay out of ordinary shops');
+      }
+    }
+    for (const [id, e] of p0.diyStock.entries) p0.diyStock.give(id, e.cap);
+    p0.shop.level = 4;
+    for (let i = 0; i < 100; i++) {
+      p0.rollShop();
+      assert.ok(!p0.shop.slots.some((s) => s && /_diy/.test(s.id)), 'ordinary shop level 4 still cannot roll tier-5 DIY');
+    }
+    h.invariants();
+  } finally { h.m.dispose(); }
 });
 
 test('bans: a 自选 piece whose every bond is off this match has no stock (out of the shop); 协防 is never banned', REAL, () => {
@@ -209,6 +257,12 @@ test('bans: a 自选 piece whose every bond is off this match has no stock (out 
   h.toPrep(1);
   p0.shop.level = 5;
   for (let i = 0; i < 300; i++) { p0.rollShop(); assert.ok(!p0.shop.slots.some((s) => s && s.id === T5A)); }
+  p0.shop.level = 4;
+  for (let i = 0; i < 40; i++) {
+    const offer = p0.pushRewardOffer('merge');
+    assert.ok(!offer?.slots.some((s) => s.id === T5A), 'a banned DIY slot stays out of promotion rewards');
+    p0.offers = [];
+  }
   h.m.flush(true);
   assert.deepEqual(h.lastTo('p_0', 'm.private').diyBanned, [T5A]);
   h.invariants();

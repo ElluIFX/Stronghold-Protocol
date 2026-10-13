@@ -22,7 +22,7 @@
 //     影响自选的支援干员"); 协防 (emptyShip) is never banned, so a prototype always stays. poolOf(baseId) routes every copy
 //     purchased or returned for a slotted slot to that stock; gifts occupy zero and merges preserve purchased copies.
 //   * the shop's draws (diyRollEntries): the stock of each slotted slot joins this player's copy-weighted rolls — the
-//     shop's chess slots use remaining copies; free reward offers use the initial capacity regardless of stock, once
+//     shop's chess slots use remaining copies once
 //     the 调度中心 has reached the slot's shopLevel (activity_table shopLevelDisplayDataDict lists the tier-5 slots at
 //     level 5 and the tier-6 slots at level 6; PRTS 帮助 "仅在调度中心等级 ≥ 干员所在等阶"). The price is the slot's (any
 //     chess of its tier: 4).
@@ -30,6 +30,7 @@
 //     operator from the pool draws its stock too — 「自选干员放入后模拟中的补给池随机范围也将被相应扩大」 (bilibili), "调度中心
 //     随机资源的范围将被扩大" (PRTS 新手教程) — under the roll's own tier rules (the effect's tier / maxTier: no 调度中心 gate,
 //     as for a preset chess) and filters (bonds read through the player's data view).
+//     Promotion rewards use the initial capacity regardless of remaining stock at their reward tier.
 // Installed on PlayerState.prototype by server/match/PlayerState.js (a method container: never instantiated; `this` is
 // the player state).
 

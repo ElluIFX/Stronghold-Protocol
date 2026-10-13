@@ -21,7 +21,7 @@ export const TEXT_SIZES = Object.freeze(['sm', 'md', 'lg', 'xl']);
  * in-match shortcuts' key map (ui/gameLogic/shortcuts.js; settings → 快捷键). textSize: TEXT_SIZES (css/theme.css `--t`,
  * applied by ui/settings.js applyTextSize).
  */
-export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, quality: 'high', textSize: 'sm', keys: DEFAULT_HOTKEYS });
+export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, ammoCount: false, quality: 'high', textSize: 'sm', keys: DEFAULT_HOTKEYS });
 const QUALITIES = ['high', 'medium', 'low'];
 /**
  * The quality of a player who never chose one: 中 on a phone (phone audit P6 — 高 renders two full-screen WebGL canvases
@@ -37,7 +37,7 @@ const VOICE_LANG_KEYS = [...VOICE_LANGS, 'off'];
  * @param {any} raw
  * @param {'high'|'medium'|'low'} [fallbackQuality] the quality when none (or an unknown one) was saved: defaultQuality(phone)
  * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en'|'kr'|'off', voiceOverrides: Record<string, string>,
- *   muted: boolean, damageNumbers: boolean, quality: 'high'|'medium'|'low', textSize: 'sm'|'md'|'lg'|'xl',
+ *   muted: boolean, damageNumbers: boolean, ammoCount: boolean, quality: 'high'|'medium'|'low', textSize: 'sm'|'md'|'lg'|'xl',
  *   keys: Record<'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
  */
 export function sanitizeSettings(raw, fallbackQuality = DEFAULT_SETTINGS.quality) {
@@ -51,6 +51,7 @@ export function sanitizeSettings(raw, fallbackQuality = DEFAULT_SETTINGS.quality
     voiceOverrides: sanitizeVoiceOverrides(r.voiceOverrides),
     muted: typeof r.muted === 'boolean' ? r.muted : DEFAULT_SETTINGS.muted,
     damageNumbers: typeof r.damageNumbers === 'boolean' ? r.damageNumbers : DEFAULT_SETTINGS.damageNumbers,
+    ammoCount: typeof r.ammoCount === 'boolean' ? r.ammoCount : DEFAULT_SETTINGS.ammoCount,
     quality: QUALITIES.includes(r.quality) ? r.quality : fallbackQuality,
     textSize: TEXT_SIZES.includes(r.textSize) ? r.textSize : DEFAULT_SETTINGS.textSize,
     keys: sanitizeHotkeys(r.keys),

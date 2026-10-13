@@ -223,8 +223,8 @@ export class PlayerAcquire {
    * capacity-weighted roll excluding the ones already drawn, independent of purchase stock; a tier without another chess tops
    * up from the tier below (user playtest #6 item 19: the official promotion reward never offers one operator twice —
    * the user's first-hand report; the normal shop's slots may repeat). The offer and its granted pick occupy no copies.
-   * The player's slotted 自选 pieces join the draw like in its shop (player/diy.js diyRollEntries: once the 调度中心 is at
-   * the slot's level) — the reward is a temporary refresh of the shop ("临时刷新3名…干员") [ASSUMED].
+   * The player's slotted 自选 pieces join at the reward tier, independent of the ordinary shop's shopLevel gate.
+   * Explicit `ids` bypass the random draw.
    */
   pushRewardOffer(source = 'merge', { tier = null, ids = null, label = null } = {}) {
     const ro = this.gd.rewardOffer();
@@ -237,7 +237,7 @@ export class PlayerAcquire {
       for (let i = 0; i < ro.count; i++) {
         let id = null;
         for (let tt = t; tt >= 1 && !id; tt--) id = this.m.pool.roll(this.m.rngShop, {
-          tier: tt, filter: fresh, extra: this.diyRollEntries({ ignoreStock: true }), ignoreStock: true,
+          tier: tt, filter: fresh, extra: this.diyStockEntries({ ignoreStock: true }), ignoreStock: true,
           weight: source === 'merge' ? (candidate, copies) => this._rosmontisRecruitWeight(candidate, copies) : null,
         });
         if (id) list.push(id);
