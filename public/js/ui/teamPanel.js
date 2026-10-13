@@ -198,6 +198,8 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
       const uniteLocal = uniteLocalFor(pub, uniteShown, uniteField, p.playerId);
       const lp = rowLp(p, pub, self ? selfLive : null, { uniteLocal, cap });
       const inTeam = team.has(p.playerId);
+      const level = Number.isInteger(p.shopLevel) && p.shopLevel > 0 ? p.shopLevel : null;
+      const levelTip = level == null ? null : `${t('调度中心')} · LV ${level}`;
       return html`<div key=${p.playerId} class=${cx('team__row', self && 'is-self', inTeam && 'is-team', watched && 'is-watched', p.alive === false && 'is-dead', open && 'is-open')}>
         <button type="button" class="team__btn" onClick=${() => click(p, self)} onDblClick=${(e) => dblClick(e, p, self)} title=${inTeam && !self ? `${title} · ${t('与你在同一战场')}` : title} aria-expanded=${observe && !self ? String(open) : undefined}>
           <${PlayerAvatar} player=${p} self=${self} />
@@ -206,6 +208,13 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
           ${p.isBot ? html`<span class="team__ai">AI</span>` : null}
           ${self ? html`<span class="team__you"><${Icon} name="user" /></span>` : null}
         </button>
+        ${level != null ? html`<${Tooltip} text=${levelTip} placement="right" class="team__level-tip">
+          <span class="team__level" role="img" aria-label=${levelTip}
+              style=${`--level-color:var(--lv-${Math.min(level, 6)});--level-accent:var(--tier-${Math.min(level, 6)})`}>
+            <span class="team__level-label" aria-hidden="true">LV</span>
+            <b class="team__level-num num" aria-hidden="true">${level}</b>
+          </span>
+        <//>` : null}
         <div class="team__info">
           <span class="team__top">
             ${bandTagShown(p, Array.isArray(seats) ? seats.find((x) => x && x.playerId === p.playerId)?.avatarUrl : null)

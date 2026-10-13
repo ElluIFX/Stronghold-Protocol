@@ -306,6 +306,17 @@
 .team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: .11rem; font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
 .team__you { position: absolute; right: -.08rem; top: -.08rem; width: .22rem; height: .22rem; display: grid; place-items: center; background: var(--mint-500); color: var(--text-on-mint); clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
 .team__you .icon { width: .14rem; height: .14rem; }
+.team__level-tip { flex: none; margin-inline: -.04rem; }
+.team__level {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .01rem;
+  width: max(.4rem, 18px); height: max(.58rem, 27px);
+  background: linear-gradient(135deg, var(--level-color), rgba(8, 11, 10, .94));
+  border: 1px solid var(--line-2); border-bottom: 2px solid var(--level-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35); line-height: 1;
+}
+.team__level-label { font-family: var(--font-display); font-size: max(.1rem, 6px); font-weight: 700; letter-spacing: .08em; color: var(--text-lo); }
+.team__level-num { font-size: max(.25rem, 12px); font-weight: 700; color: var(--text-hi); font-variant-numeric: tabular-nums; }
+.team__row.is-dead .team__level { opacity: .5; }
 .team__info { display: flex; flex-direction: column; gap: .02rem; min-width: 0; padding: .04rem .12rem .04rem .06rem; background: linear-gradient(90deg, rgba(8, 11, 10, .82), rgba(8, 11, 10, 0)); }
 .team__name { font-size: .15rem; font-weight: 500; color: var(--text-md); max-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
 .team__line { display: flex; align-items: center; gap: .1rem; }
@@ -348,6 +359,8 @@
    players keep the rules above. */
 .team--compact { gap: .08rem; }
 .team--compact .pavatar { --pa: .6rem; }
+.team--compact .team__level { width: max(.32rem, 16px); height: max(.44rem, 22px); }
+.team--compact .team__level-num { font-size: max(.21rem, 11px); }
 .team--compact .team__seat { font-size: .1rem; left: -.03rem; top: -.05rem; padding: 0 .03rem; }
 .team--compact .team__ai { font-size: .1rem; right: -.03rem; bottom: -.03rem; padding: 0 .03rem; }
 .team--compact .team__you { width: .18rem; height: .18rem; right: -.06rem; top: -.06rem; }
@@ -368,6 +381,9 @@
 @media (max-height: 431.98px) {
   .team--compact { gap: .05rem; }
   .team--compact .pavatar { --pa: .48rem; }
+  .team--compact .team__level { height: .48rem; gap: 0; }
+  .team--compact .team__level-label { font-size: max(.1rem, 5px); }
+  .team--compact .team__level-num { font-size: max(.21rem, 10px); }
   .team--compact .team__bubble { transform: translateY(-50%) scale(.54); }
 }
 
