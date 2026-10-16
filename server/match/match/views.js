@@ -5,12 +5,14 @@
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { PHASE, GEO } from '../../../shared/constants.js';
+import { amedicStatMultiplier } from '../../../shared/bandModifiers.js';
 import { boardOrder, pieceDir } from '../board.js';
 import { bondList, offBondCounts } from '../bondsMeta.js';
 import { cardView } from '../choices.js';
 import { bountySpawns, previewOf } from '../waves.js';
 import { timelineAt } from '../fields.js';
 import { bossFieldPlacement } from '../finalAssault.js';
+import { uniteGroups } from '../unite.js';
 import { battleProgress } from '../../sim/spec.js';
 
 /** A reported capsule numerator clamped to its denominator, else null (unknown — never a fabricated 0). */
@@ -126,7 +128,10 @@ export class MatchViews {
     };
     if (this.teamLp != null) v.teamLp = Math.max(0, Math.round(this.teamLp));
     // 最终攻势 / 隐秘核心: when the overtime drain starts (ms epoch; `deadline` is the level's 120 s countdown)
-    if ((this.phase === PHASE.FINAL_ASSAULT || this.phase === PHASE.HIDDEN_CORE) && this.overtimeAt) v.overtimeAt = this.overtimeAt;
+    if ((this.phase === PHASE.FINAL_ASSAULT || this.phase === PHASE.HIDDEN_CORE) && this.overtimeAt) {
+      v.overtimeAt = this.overtimeAt;
+      if (this.gd.isLargeRoom(this.bossAlive)) v.overtimeDrainPerSec = this.gd.bossOvertimeDrainFor(this.bossAlive);
+    }
     if (this.bossPool) v.bossHp = { hp: Math.max(0, Math.round(this.bossPool.hp)), max: Math.round(this.bossPool.maxHp) };
     if (this.phase === PHASE.BAND_DRAFT && this.draft) {
       const d = this.draft;
@@ -143,8 +148,14 @@ export class MatchViews {
         cards: s.cards.map(c => cardView(c)), order: s.order.slice(),
         turn: this.spTurn(), picks: { ...s.picks }, taken: { ...s.taken }, untimed: !!s.untimed,
       };
+      if (this.gd.isLargeRoom(s.order.length)) v.sp.turnSeconds = s.untimed ? 0 : s.turnSeconds || 0;
     }
-    if (this.phase === PHASE.UNITE && this.unitePlan) v.unite = { helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId) };
+    if (this.phase === PHASE.UNITE && this.unitePlan) {
+      v.unite = { helpers: this.unitePlan.helpers.map((p) => p.playerId), leakers: this.unitePlan.leakers.map((p) => p.playerId) };
+      const groups = uniteGroups(this.unitePlan);
+      v.unite.activeFieldId = groups[this.unitePlan.activeGroup || 0]?.fieldId || null;
+      if (groups.length > 1) v.unite.fields = groups.map((g) => ({ fieldId: g.fieldId, helpers: g.helpers.map((p) => p.playerId), leakers: g.leakers.map((p) => p.playerId) }));
+    }
     // SETTLE after a 联防: its outcome as data (settle.js uniteResultView; GitHub #235, PR #112) — { through, helpers,
     // leakers, losses: { playerId: the LP settlement charged this round } } — the client's result box reads the viewer's
     // own charge from it; absent when no 联防 resolved (the client then shows the round's own battle result)
@@ -249,7 +260,9 @@ export class MatchViews {
    * battleStart, so the prep view always uses the reserve medic, regardless of the current elite count. The stage's
    * normal-board slot is transformed to the correct half of a boss field by _onBossHalf / the client prep camera. */
   prepMapChars(ps) {
-    if (!ps?.alive || this.phase !== PHASE.PREP || !this.teamMedicGranted()) return [];
+    if (!ps?.alive || this.phase !== PHASE.PREP) return [];
+    const multiplier = amedicStatMultiplier(this.alivePlayers().map(p => this.gd.band(p.bandId)?.effectRef ?? p.bandId));
+    if (!multiplier) return [];
     const id = 'char_605_cmedic';
     const slot = this.stage?.mapChars?.find((m) => m?.key === id && Array.isArray(m.pos) && m.pos[0] >= 9 && m.pos[0] <= 12
       && m.pos[1] >= 0 && m.pos[1] <= 10 && !/multi_only/.test(String(m.alias)));
@@ -260,7 +273,7 @@ export class MatchViews {
       id: -ps.seat - 1, uid: -ps.seat - 1, kind: 'token', side: 'ally', ownerId: ps.playerId, defId: id,
       area: 'board', name: rec.name || id, tier: 1, golden: false,
       spine: rec.assets?.spine || id, avatar: rec.assets?.avatar || id,
-      x: slot.pos[1], y: slot.pos[0], dir, facing: dir === 'LEFT' ? -1 : 1, maxHp: rec.stats?.maxHp || 1,
+      x: slot.pos[1], y: slot.pos[0], dir, facing: dir === 'LEFT' ? -1 : 1, maxHp: (rec.stats?.maxHp || 1) * multiplier,
     }];
   }
 

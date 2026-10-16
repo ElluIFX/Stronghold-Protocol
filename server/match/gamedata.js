@@ -395,9 +395,7 @@ export class GameData {
     const pc = this.economy.poolCopies;
     const v = ov && Number.isInteger(ov[baseId]) && ov[baseId] >= 0 ? ov[baseId] : pc?.[tier];
     const base = Number.isInteger(v) && v >= 0 ? v : (DEFAULTS.poolCopies[tier] ?? 10);
-    // Co-op doubles the single-player counts: the measured shared pool (shared by the whole team, independent of team
-    // size) and each player's private 自选 stock alike — the maintainer's decision of 2026-10-15 (GitHub #650): with
-    // the shared pool doubled and the 自选 stock not, a 自选 operator was diluted in the copy-weighted rolls.
+    // Shared co-op stock doubles; this fork keeps private DIY stock at its single-player count.
     const multiplier = this.isSolo || this.chess(baseId)?.isDiy ? 1 : posIntOr(this.economy.coopPoolMultiplier, 1);
     return base * multiplier;
   }
@@ -405,7 +403,7 @@ export class GameData {
   /**
    * Normal equipment copies in the shared pool; effect-only items have no shop stock limit. A co-op match of 5–8 seats
    * (`players`, humans + bots at match start) has ceil(count × seats / 4), like poolCopies (remake extension, the
-   * maintainer's decision of 2026-10-11, docs/design/fork.md §F8); 1–4 seats or omitted: the measured count.
+   * maintainer's decision of 2026-10-11); 1–4 seats or omitted: the measured count.
    * @param {string} id
    * @param {number} [players]
    */

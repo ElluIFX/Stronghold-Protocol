@@ -5,10 +5,14 @@
 // pushes (GitHub #87). Eliminated humans and spectator seats follow a player through every phase reset (community
 // report of 2026-10-06, item 56; the official DeadAutoObDn { obIndex, state, preparation }, research 09 §3.1; the idea
 // of PR #189): the player they last watched with a manual g.watch (`watchPref`), else the first player still in.
+// Several 联防 fields (above 4 alive, unite.js uniteGroups — remake extension): a helper is shown its own field, a leaker
+// the field holding its enemies, a follower the field of the player it follows (_uniteHomeField); a helper switches only
+// once its own field is done (under client-side combat).
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { PHASE, ERR } from '../../../shared/constants.js';
 import { snapFrame } from '../fields.js';
+import { uniteGroupOf } from '../unite.js';
 import { OK, fail } from './common.js';
 
 export class MatchWatch {
@@ -102,10 +106,17 @@ export class MatchWatch {
     return this.order.find((q) => ok(q.playerId))?.playerId ?? null;
   }
 
-  /** The field of the player `ps` follows among `fields` (null when that player has none this phase). */
+  /**
+   * The field of the player `ps` follows among `fields` (null when that player has none this phase). 联防: a followed
+   * leaker's field is the one holding its enemies (unite.js uniteGroupOf; one field: 'u').
+   */
   _watchTargetField(ps, fields) {
     const pid = this._watchTargetOf(ps);
-    return pid ? fields.find((f) => Array.isArray(f.players) && f.players.includes(pid)) || null : null;
+    if (!pid) return null;
+    const own = fields.find((f) => Array.isArray(f.players) && f.players.includes(pid)) || null;
+    if (own || this.phase !== PHASE.UNITE || !this.unitePlan) return own;
+    const g = uniteGroupOf(this.unitePlan, pid);
+    return (g && fields.find((f) => f.kind === 'unite' && f.fieldId === g.fieldId)) || null;
   }
 
   /** Does `ps` follow a player (an eliminated human or a spectator seat, still in the room)? */
@@ -140,6 +151,8 @@ export class MatchWatch {
     if (ps.alive) {
       if ((f.kind === 'boss' || f.kind === 'hidden') && own && own !== f) return fail(ERR.BAD_TARGET, 'other group hidden');
       if (f.kind === 'normal' && own && own !== f && own.live) return fail(ERR.WRONG_PHASE, 'own battle running');
+      // several 联防 fields (above 4 alive): a helper stays on its own field while it runs (it may be its authority)
+      if (f.kind === 'unite' && own && own !== f && own.kind === 'unite' && own.live) return fail(ERR.WRONG_PHASE, 'own battle running');
     }
     this.watchers.set(ps.playerId, f.fieldId);
     this._watchPrefSet(ps, f, playerId);
@@ -156,7 +169,7 @@ export class MatchWatch {
     if (!this.fields.some((f) => f.cc)) { this._followScout(ps, { keep: true }); return; }
     const fid = this.watchers.get(ps.playerId);
     let f = fid ? this.fields.find((x) => x.fieldId === fid) : null;
-    if (!f) f = this.fields.find((x) => x.players.includes(ps.playerId)) || (this.phase === PHASE.UNITE ? this.fields[0] : null);
+    if (!f) f = this.fields.find((x) => x.players.includes(ps.playerId)) || (this.phase === PHASE.UNITE ? this._uniteHomeField(ps) : null);
     if (!f && !ps.alive) f = this._watchTargetField(ps, this.fields) || this.fields[0] || null;
     if (!f) return;
     this.watchers.set(ps.playerId, f.fieldId);
@@ -167,8 +180,9 @@ export class MatchWatch {
     this.watchers.clear();
     for (const ps of this._viewers()) {
       const own = this.fields.find((f) => f.players.includes(ps.playerId));
-      // an eliminated human / spectator seat: the field of the player it follows (item 56), else the first
-      const f = own || this._watchTargetField(ps, this.fields) || this.fields[0];
+      // an eliminated human / spectator seat: the field of the player it follows (item 56), else the first; 联防: a
+      // leaker the field holding its enemies (several fields above 4 alive — _uniteHomeField)
+      const f = own || (this.phase === PHASE.UNITE ? this._uniteHomeField(ps) : null) || this._watchTargetField(ps, this.fields) || this.fields[0];
       if (!f) continue;
       this.watchers.set(ps.playerId, f.fieldId);
       if (ps.connected) this._sendField(ps.playerId, f.fieldId);

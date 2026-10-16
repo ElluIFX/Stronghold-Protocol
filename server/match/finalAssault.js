@@ -3,8 +3,7 @@
 //
 //   * Merged LP: teamLp = Σ LP of the alive players at the start of the Final Assault (no cap); the Hidden Core
 //     continues with what is left.
-//   * Pairing: shuffled once per match before Final Assault prep; Hidden Core keeps those pairs. If players leave,
-//     intact pairs stay together and the remaining single players pair up. An odd player uses the `_s` template
+//   * Pairing: alive players by seat order, recomputed when membership changes. An odd player uses the `_s` template
 //     (solo modes always use `_s`). Field ids 'b1', 'b2'. In a pair the first player is the LEFT side, the second the
 //     RIGHT side (the sim mirrors the right side: board col c → field col 20 − c with the piece direction RIGHT ↔
 //     LEFT, UP / DOWN unchanged (DESIGN §3, research 09 §1.2 ConvertChessPositionInfoToBossMap); board rows 9–12 →
@@ -57,7 +56,7 @@ export function bossFieldPlacement(side, row, col, dir = 'RIGHT') {
   return side === 'R' ? { row: r, col: COLS - 1 - col, dir: mirrorDir(d) } : { row: r, col, dir: d };
 }
 
-/** Seeded initial pairing; `previous` carries player-id pairs through prep, combat and Hidden Core. */
+/** Seat-order pairing. Saved public pairs still describe the fields used by prep, combat and Hidden Core. */
 export function pairPlayers(alive, _rng, _previous = null) {
   const sorted = alive.slice().sort((a, b) => a.seat - b.seat);
   const groups = [];

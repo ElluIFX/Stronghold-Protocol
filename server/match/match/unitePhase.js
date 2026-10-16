@@ -1,11 +1,12 @@
 // server/match/match/unitePhase.js — Match methods: 联防 glue (the rules: server/match/unite.js) — the UNITE phase in
 // both modes (the 联防 field from the helpers' carried state and the leakers' enemies), its end, and the leakers' live
-// counts (_uniteLeft, user playtest #6 item 7; _uniteTick in the server-run mode).
+// counts (_uniteLeft, user playtest #6 item 7; _uniteTick in the server-run mode). Above 4 alive (remake extension,
+// unite.js uniteGroups) helper groups run sequentially — 'u', 'u2', … — passing only surviving enemies forward.
 // Installed on Match.prototype by server/match/Match.js (a method container: never instantiated; `this` is the match).
 
 import { PHASE, GEO } from '../../../shared/constants.js';
 import { deriveSeed } from '../../sim/rng.js';
-import { uniteBattleOpts, uniteSurvivors } from '../unite.js';
+import { uniteBattleOpts, uniteSurvivors, uniteGroups, uniteGroupOf, advanceUniteGroup } from '../unite.js';
 import { FieldRunner, timelineAt, uniteBillBounds } from '../fields.js';
 import { uniteLeft } from '../../sim/spec.js';
 import { FLOW_TICKER_PRIORITY, DELAYS } from './common.js';
@@ -14,43 +15,61 @@ import { onStartUnite } from '../botEmotes.js';
 
 export class MatchUnite {
   startUnite(plan) {
-    if (this.clientCombat) { this._startUniteClient(plan); return; }
     this.phase = PHASE.UNITE;
     this.unitePlan = plan;
+    plan.activeGroup = 0;
+    plan.results = [];
+    this._startUniteGroup();
+    onStartUnite(this, plan);
+  }
+
+  _startUniteGroup() {
+    const plan = this.unitePlan;
+    const group = uniteGroups(plan)[plan.activeGroup || 0];
+    this._uniteEndingField = null;
+    this._uniteBounds = null;
+    if (this.clientCombat) { this._startUniteClient(plan); return; }
     const limit = this.wave ? this.wave.timeLimit : 60;
-    const battle = this.newBattle(this._uniteOpts(plan, limit));
-    this.fields = [{ fieldId: 'u', kind: 'unite', players: plan.helpers.map((p) => p.playerId), battle, live: true }];
+    const opts = this._uniteOpts(group, limit);
+    const battle = this.newBattle(opts);
+    this.fields = [{ fieldId: group.fieldId, kind: 'unite', players: group.helpers.map(p => p.playerId), battle, opts, live: true }];
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
     this._defaultWatch();
     this.markPublic();
-    this.tickerText(msg('联防阶段：{names} 迎战突破防线的敌人', { names: plan.helpers.map((p) => p.name) }), FLOW_TICKER_PRIORITY);
-    onStartUnite(this, plan); // an AI helper says "合作愉快" once on the open of a 联防 (enabled by default; SP_BOT_EMOTES=0 silences it)
+    this.tickerText(msg('联防阶段：{names} 迎战突破防线的敌人', { names: group.helpers.map((p) => p.name) }), FLOW_TICKER_PRIORITY);
     this._uniteLeftKey = null;
     this.runner = new FieldRunner(this, this.fields, {
       onTick: (runner) => this._uniteTick(runner),
       onDone: (runner) => {
         if (this.phase !== PHASE.UNITE) return;
-        const res = runner.resultOf(this.fields[0]);
-        this._collectSimErrors(this.fields[0], res);
-        this.fields[0].live = false;
-        this.deadline = 0;
-        this.markPublic();
-        this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, res));
+        this._completeUniteStage(runner.resultOf(this.fields[0]));
       },
     });
     this.runner.start();
   }
 
   /**
-   * Battle options of the 联防 field (helpers' carried end state, the leakers' enemies) on the round's battlefield, its
+   * The field a viewer is shown during 联防 by default (the phase start, a resync with no field picked): a helper's own
+   * field, the field holding a leaker's enemies (unite.js uniteGroupOf), else the field of the player it follows
+   * (watch.js _watchTargetField: an eliminated human, a spectator seat), else the first 联防 field. One field: 'u'.
+   */
+  _uniteHomeField(ps) {
+    const g = this.unitePlan && ps ? uniteGroupOf(this.unitePlan, ps.playerId) : null;
+    return (g && this.fields.find((f) => f.kind === 'unite' && f.fieldId === g.fieldId)) || (ps ? this._watchTargetField(ps, this.fields) : null) || this.fields[0] || null;
+  }
+
+  /**
+   * Battle options of a 联防 field — a plan group (helpers' carried end state, its leakers' enemies; above 4 alive one
+   * of several, unite.js uniteGroups) — on the round's battlefield, its
    * terrain, crates, water, devices and runes included (unite.js header; the owner's decision of 2026-10-07 — 0.2.0's
    * escaped-level map is withdrawn). The field meta and the client-run spec carry the match stageId, so every viewer
    * draws the battlefield the boards stand on.
    */
   _uniteOpts(plan, limit) {
     const { wave, players } = uniteBattleOpts(this, plan, limit);
+    const fieldId = plan.fieldId || 'u';
     return {
-      seed: deriveSeed(this.seed, `u:${this.round}`),
+      seed: deriveSeed(this.seed, `${fieldId}:${this.round}`),
       kind: 'unite',
       modeId: this.modeId,
       round: this.round,
@@ -62,7 +81,7 @@ export class MatchUnite {
       routes: wave.routes,
       sharedBoss: null,
       flags: { layerGainsEnabled: false, ...this.gd.dp },
-      fieldId: 'u',
+      fieldId,
       // leaked enemies re-enter with the stats they had: the round template's stat overrides apply again
       enemyOverrides: this.wave && this.wave.overrides ? this.wave.overrides : {},
       waveId: wave.templateId,
@@ -73,30 +92,48 @@ export class MatchUnite {
     this.phase = PHASE.UNITE;
     this.unitePlan = plan;
     const limit = this.wave ? this.wave.timeLimit : 60;
-    const f = this._ccField({ fieldId: 'u', kind: 'unite', players: plan.helpers.map((p) => p.playerId), opts: this._uniteOpts(plan, limit) });
+    // Only the current stage gets an authority or a server simulation.
+    const g = uniteGroups(plan)[plan.activeGroup || 0];
+    const fields = [this._ccField({ fieldId: g.fieldId, kind: 'unite', players: g.helpers.map((p) => p.playerId), opts: this._uniteOpts(g, limit) })];
     this.deadline = this.sched.instant ? 0 : this.sched.now() + Math.round((limit / this.gameSpeed) * 1000);
     this.watchers.clear();
-    this._launch([f]);
-    // helpers and everyone else (as observers, spectator seats included) simulate the same 联防 spec locally
+    this._launch(fields);
+    // helpers and everyone else (as observers, spectator seats included) simulate a 联防 spec locally: a helper its own
+    // field, a leaker the field holding its enemies, anyone else the first field
     for (const ps of this._viewers()) {
-      this.watchers.set(ps.playerId, 'u');
+      const f = this._uniteHomeField(ps);
+      if (!f) continue;
+      this.watchers.set(ps.playerId, f.fieldId);
       this._sendStart(ps.playerId, f, { watch: !f.players.includes(ps.playerId) });
     }
     this.markPublic();
-    this.tickerText(msg('联防阶段：{names} 迎战突破防线的敌人', { names: plan.helpers.map((p) => p.name) }), FLOW_TICKER_PRIORITY);
+    this.tickerText(msg('联防阶段：{names} 迎战突破防线的敌人', { names: g.helpers.map((p) => p.name) }), FLOW_TICKER_PRIORITY);
   }
 
+  /** Finish the current client stage, then launch its successor or settle after the combat-end pause. */
   _finishUniteClient() {
     if (this.phase !== PHASE.UNITE) return;
-    const f = this.fields[0];
-    const res = f.result;
-    this._collectSimErrors(f, res);
+    this._completeUniteStage(this.fields[0].result);
+  }
+
+  _completeUniteStage(result) {
+    if (this.phase !== PHASE.UNITE) return;
+    const field = this.fields[0];
+    if (this._uniteEndingField === field) return;
+    this._uniteEndingField = field;
+    this._collectSimErrors(field, result);
     this._stopClientCombat();
-    f.live = false;
+    for (const f of this.fields) f.live = false;
+    this.runner = null;
     this.deadline = 0;
     this.markPublic();
     const plan = this.unitePlan;
-    this.later(this.scaled(DELAYS.COMBAT_END), () => this.settle(plan, res));
+    this.later(this.scaled(DELAYS.COMBAT_END), () => {
+      if (this.phase !== PHASE.UNITE || this.unitePlan !== plan) return;
+      const next = advanceUniteGroup(plan, result, field.opts?.spawns || field.spec?.spawns || []);
+      if (next) this._startUniteGroup();
+      else this.settle(plan, plan.results.length === 1 ? plan.results[0] : plan.results);
+    });
   }
 
   /**
@@ -115,16 +152,17 @@ export class MatchUnite {
     const plan = this.unitePlan;
     if (this.phase !== PHASE.UNITE || !plan || !ps || !plan.leakers.includes(ps)) return null;
     const pid = ps.playerId;
-    const f = this.fields.find((x) => x && x.kind === 'unite') || null;
+    // the leaker's own 联防 field (one field: 'u'; above 4 alive the field holding its enemies — unite.js)
+    const g = uniteGroups(plan)[plan.activeGroup || 0];
+    const f = this.fields.find((x) => x && x.kind === 'unite' && x.fieldId === g.fieldId) || null;
     let res = null;
     if (f && f.cc) res = f.done ? f.result : null;
     else if (f && f.battle && f.battle.finished) { try { res = f.battle.result(); } catch { res = null; } }
     if (res && res.synthetic) {
-      const own = this.lastResults.get(pid);
-      return own && Array.isArray(own.leaked) ? own.leaked.filter((l) => l && l.counted !== false).length : 0;
+      return g.leaked.filter(l => l.sourcePlayerId === pid).length + (g.notReentered.get(pid) || 0);
     }
-    if (res) return uniteSurvivors(plan, res).get(pid) || 0;
-    const sent = plan.leaked.filter((l) => l.sourcePlayerId === pid).length;
+    if (res) return uniteSurvivors(g, res).get(pid) || 0;
+    const sent = g.leaked.filter((l) => l.sourcePlayerId === pid).length;
     let live = null;
     if (f && f.cc) {
       if (f.mode === 'server' && f.timeline) {
@@ -135,18 +173,23 @@ export class MatchUnite {
     } else if (f && f.battle) {
       try { live = uniteLeft(f.battle); } catch { live = null; }
     }
-    if (!this._uniteBounds || this._uniteBounds.plan !== plan) this._uniteBounds = { plan, bounds: uniteBillBounds(plan.leaked, this.gd) };
+    if (!this._uniteBounds || this._uniteBounds.plan !== plan) {
+      // per field: what that field's result may bill its leakers (validateClientResult's budget on the field's own spec)
+      const bounds = new Map();
+      for (const grp of uniteGroups(plan)) for (const [id, n] of uniteBillBounds(grp.leaked, this.gd)) bounds.set(id, n);
+      this._uniteBounds = { plan, bounds };
+    }
     const bound = this._uniteBounds.bounds.get(pid) ?? sent;
     const standing = live ? Math.min(bound, Math.max(0, Math.trunc(Number(live[pid]) || 0))) : sent;
-    return standing + (plan.notReentered.get(pid) || 0);
+    return standing + (g.notReentered.get(pid) || 0);
   }
 
   /** Server-run 联防 (streaming mode): refresh m.public about once a game second when a leaker's count moved. */
   _uniteTick(runner) {
-    const f = runner && runner.fields ? runner.fields[0] : null;
-    if (!f || !f.battle || runner.ticks % 30 !== 0) return;
+    const fs = runner && runner.fields ? runner.fields.filter((f) => f && f.battle) : [];
+    if (!fs.length || runner.ticks % 30 !== 0) return;
     let key = '';
-    try { key = JSON.stringify(uniteLeft(f.battle)); } catch { key = ''; }
+    try { key = JSON.stringify(fs.length === 1 ? uniteLeft(fs[0].battle) : fs.map((f) => uniteLeft(f.battle))); } catch { key = ''; }
     if (key === this._uniteLeftKey) return;
     this._uniteLeftKey = key;
     this.markPublic();

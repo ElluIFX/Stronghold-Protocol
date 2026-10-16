@@ -24,18 +24,25 @@
 //   combat start  nothing overdue in temp, everyone ready, funds lost (carry bands excepted), unfrozen shop cleared,
 //                 one field per alive player
 //   drafts        every seat holds an allowed band with LP = totalHp; 机变: one card per alive player, card ↔ picker
-//                 maps consistent, 6 (co-op) / 3 (solo) cards
+//                 maps consistent, at most choices.js spDraftCardCount cards (6 co-op / 3 solo; alive + 2 above 4 alive)
 //   联防          decided after the COMBAT_END pause from the players still in: runs iff co-op with ≥ 1 leaker and
 //                 ≥ 1 perfect player; helpers = unite.js helperOrder (PRTS: units > active bond > layers > standing
-//                 units > seat, research 08 §5); leakers = players with counted leaks
+//                 units > seat, research 08 §5); leakers = players with counted leaks; one field 'u' up to 4 alive —
+//                 above 4 alive ≤ ⌈alive / 4⌉ helper groups take consecutive fields 'u', 'u2', … (1–2 helpers each).
+//                 The first field receives all leaks; surviving enemies continue to the next helper group.
+//                 m.fields holds only the active field; every group tracks all leakers.
 //   settle        no unite ⇒ loss = min(cap, counted leaks); after 联防 a leaker loses ≤ cap (its leaked enemies'
-//                 offspring count too), everybody else ≤ min(cap, own counted leaks); LP ≤ 0 ⇔ eliminated
-//   final assault fields follow the saved per-match pairs, team LP = Σ alive LP, boss pool = bossPoolHp(); hidden core only
-//                 after a win when hiddenEligible() holds
-//   result        each title ≤ once, ≤ 1 title per player, onlyOnWin titles only on a win, roundsPassed per player,
-//                 Σ alive players' LP = the merged team LP after the Final Assault
+//                 offspring count too; billed from the last completed field, or own leaks when no field ran),
+//                 everybody else ≤ min(cap, own counted leaks); LP ≤ 0 ⇔ eliminated
+//   final assault fields pair alive players by seat, team LP = Σ alive LP, boss pool = bossPoolHp() (per player alive,
+//                 above 4 alive too), the overtime factor's alive count; hidden core only after a win when
+//                 hiddenEligible() holds (threshold × players / 4 above 4 summed players)
+//   result        each title ≤ once (above 4 players: the one-each pass's titles kept, a repeat only for a player that
+//                 pass left without one), ≤ 1 title per player, onlyOnWin titles only on a win, roundsPassed per
+//                 player, Σ alive players' LP = the merged team LP after the Final Assault
 //   deadlines     every timed phase's m.public deadline equals its configured duration × timerScale; the co-op
-//                 strategy draft has one countdown: the deadline is the current turn's (Match.BAND_TURN_SECONDS). A match
+//                 strategy draft has one countdown: the deadline is the current turn's (Match.BAND_TURN_SECONDS; above 4
+//                 seats gamedata.js largeRoom.bandTurn); a later 机变 pick spTurn (above 4 alive largeRoom.spTurn). A match
 //                 with a single human (solo, or a 同盟 room with AI teammates only: Match.soloUntimed) times nothing
 //                 outside its battles — no INFO_CHECK / draft / 机变 / prep deadline, BATTLE_CHECK / ROUND_START / SETTLE
 //                 silent (deadline 0)
@@ -44,9 +51,11 @@
 import { PHASE } from '../../shared/constants.js';
 import { collectViolations } from './invariants.js';
 import { mergeTile, pieceDir, canPlace, placeClass } from './board.js';
-import { bossPoolHp, hiddenEligible } from './finalAssault.js';
-import { helperOrder } from './unite.js';
+import { pairPlayers, bossPoolHp, hiddenEligible } from './finalAssault.js';
+import { helperOrder, uniteHelperGroups, uniteFieldBudget, uniteFieldCount, uniteFieldId, uniteGroups } from './unite.js';
 import { BAND_TURN_SECONDS } from './Match.js';
+import { spDraftCardCount } from './choices.js';
+import { assignTitles } from './results.js';
 
 /**
  * @param {import('./Match.js').Match} m
@@ -303,7 +312,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       // one countdown (user playtest #4 item 4): the step's deadline IS the current turn's, BAND_TURN_SECONDS long
       if (m.soloUntimed) { if (m.deadline || d.turnDeadline) fail('untimed band draft is timed'); } else {
         if (m.deadline !== d.turnDeadline) fail(`BAND_DRAFT: deadline ${m.deadline} is not the turn's ${d.turnDeadline}`);
-        expectDeadline(BAND_TURN_SECONDS, 'BAND_DRAFT turn');
+        expectDeadline(gd.bandTurnSeconds(m.order.length, BAND_TURN_SECONDS), 'BAND_DRAFT turn');
       }
     });
     return r;
@@ -337,7 +346,7 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       if (m.phase !== PHASE.SP_DRAFT || !m.sp) return;
       const s = m.sp;
       if (s.idx >= s.order.length) return;
-      if (m.soloUntimed) { if (m.deadline) fail('untimed 机变 is timed'); } else expectDeadline(s.idx === 0 ? gd.timer('spFirst') : gd.timer('spTurn'), `SP_DRAFT turn ${s.idx}`);
+      if (m.soloUntimed) { if (m.deadline) fail('untimed 机变 is timed'); } else expectDeadline(s.idx === 0 ? gd.timer('spFirst') : gd.spTurnSeconds(s.order.length), `SP_DRAFT turn ${s.idx}`);
     });
     return res;
   });
@@ -345,7 +354,8 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     const s = m.sp;
     if (m.phase === PHASE.SP_DRAFT && s) check('sp draft', () => {
       const alive = m.alivePlayers().map((p) => p.playerId);
-      const want = m.isSolo ? 3 : 6;
+      // 6 (co-op) / 3 (solo); alive + 2 when more than 4 were alive at the draft start (s.order)
+      const want = spDraftCardCount(gd, m.round, s.order.length);
       if (s.cards.length > want) fail(`${s.cards.length} 机变 cards (max ${want})`);
       if (s.order.length !== alive.length) fail(`机变 order ${s.order.length} for ${alive.length} alive`);
       for (const pid of alive) {
@@ -400,15 +410,48 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const alive = m.alivePlayers();
       const leakers = alive.filter((p) => counted(p.playerId) > 0).map((p) => p.playerId).sort();
       const perfect = alive.filter((p) => counted(p.playerId) === 0);
-      const helpers = helperOrder(m, perfect, res).map((p) => p.playerId);
-      if (helpers.length > gd.unite.maxHelpers) fail(`${helpers.length} 联防 helpers (max ${gd.unite.maxHelpers})`);
+      const ids = (list) => (list || []).map((p) => p.playerId);
+      // Consecutive groups use the field budget regardless of leaker count, with maxHelpers per group.
+      const budget = uniteFieldBudget(gd, alive.length);
+      if (budget !== (alive.length > gd.largeRoom.players ? Math.ceil(alive.length / gd.largeRoom.players) : 1)) fail(`联防 field budget ${budget} for ${alive.length} alive`);
+      const fieldCount = uniteFieldCount(gd, alive.length, leakers.length);
+      if (fieldCount !== budget) fail(`联防 field count ${fieldCount} for ${alive.length} alive`);
+      const want = fieldCount > 1 ? uniteHelperGroups(m, perfect, res, fieldCount).map(ids) : [ids(helperOrder(m, perfect, res))];
+      const helpers = want.flat();
+      if (helpers.length > gd.unite.maxHelpers * fieldCount) fail(`${helpers.length} 联防 helpers (max ${gd.unite.maxHelpers} × ${fieldCount} fields)`);
       if (plan.helpers.some((p) => !p.alive || p.left)) fail(`联防 helper eliminated / departed: ${plan.helpers.filter((p) => !p.alive || p.left).map((p) => p.playerId)}`);
       if (m.isSolo) fail('联防 in solo');
       if (JSON.stringify(plan.leakers.map((p) => p.playerId).sort()) !== JSON.stringify(leakers)) fail(`联防 leakers ${plan.leakers.map((p) => p.playerId)} != ${leakers}`);
       if (JSON.stringify(plan.helpers.map((p) => p.playerId)) !== JSON.stringify(helpers)) fail(`联防 helpers ${plan.helpers.map((p) => p.playerId)} != ${helpers}`);
+      const groups = uniteGroups(plan);
+      if (groups.length !== want.length) fail(`${groups.length} 联防 fields, expected ${want.length} (${helpers.length} helpers, ${alive.length} alive)`);
+      if (groups.length > fieldCount || groups.length > Math.ceil(helpers.length / gd.unite.maxHelpers)) fail(`${groups.length} 联防 fields for ${helpers.length} helpers, ${alive.length} alive`);
+      groups.forEach((g, i) => {
+        if (g.fieldId !== uniteFieldId(i)) fail(`联防 field ${i} id ${g.fieldId}`);
+        if (!g.helpers.length || g.helpers.length > gd.unite.maxHelpers) fail(`联防 field ${g.fieldId}: ${g.helpers.length} helpers`);
+        if (!g.leakers.length) fail(`联防 field ${g.fieldId} has no leaker`);
+        if (want[i] && JSON.stringify(ids(g.helpers)) !== JSON.stringify(want[i])) fail(`联防 field ${g.fieldId} helpers ${ids(g.helpers)} != ${want[i]}`);
+        if (JSON.stringify(ids(g.leakers).sort()) !== JSON.stringify(leakers)) fail(`联防 field ${g.fieldId} leakers ${ids(g.leakers)} != ${leakers}`);
+        if (i === 0) {
+          if (JSON.stringify(g.leaked) !== JSON.stringify(plan.leaked)) fail('first 联防 field does not contain all initial leaks');
+          if (JSON.stringify([...g.notReentered]) !== JSON.stringify([...plan.notReentered])) fail('first 联防 field does not contain all initial non-reentering leaks');
+        } else if (g.leaked.length || g.notReentered.size) fail(`later 联防 field ${g.fieldId} has enemies before advancement`);
+      });
     });
     const r = orig(plan);
     runInvariants();
+    return r;
+  });
+  wrap(m, '_startUniteGroup', function (orig) {
+    const r = orig();
+    const plan = m.unitePlan;
+    check('unite fields', () => {
+      const groups = uniteGroups(plan);
+      const active = groups[plan.activeGroup ?? 0];
+      const want = active ? [`${active.fieldId}:${active.helpers.map((p) => p.playerId).join('+')}`] : [];
+      const got = m.fields.map((f) => `${f.fieldId}:${f.kind}:${f.players.join('+')}`.replace(':unite:', ':'));
+      if (JSON.stringify(got) !== JSON.stringify(want)) fail(`联防 fields ${got.join(' | ')} != plan ${want.join(' | ')}`);
+    });
     return r;
   });
   wrap(m, 'settle', function (orig, plan, uniteResult) {
@@ -420,18 +463,28 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
     const res = orig(plan, uniteResult);
     check('settle', () => {
       const cap = gd.lpCapPerRound;
-      const uniteRan = !!(plan && uniteResult && !uniteResult.synthetic);
+      // Leakers use the last actual result; a later unstarted or synthetic group cannot overwrite it.
+      const ran = new Map();
+      const results = Array.isArray(uniteResult) ? uniteResult : [uniteResult];
+      const actual = results.filter(result => result && !result.synthetic);
+      const last = actual[actual.length - 1];
+      for (const ps of plan?.leakers || []) ran.set(ps, !!last);
+      const resultCount = Array.isArray(uniteResult) ? uniteResult.length : uniteResult ? 1 : 0;
+      if (plan && (resultCount < 1 || resultCount > uniteGroups(plan).length)) fail(`settle got ${resultCount} 联防 results for ${uniteGroups(plan).length} planned groups`);
+      const uniteRan = [...ran.values()].some(Boolean);
       for (const [ps, lp0] of before) {
         const r = m.lastResults.get(ps.playerId) || { leaked: [] };
         const counted = (r.leaked || []).filter((l) => l && l.counted !== false).length;
         // after 联防 a leaker pays for every surviving enemy of its source — enemies spawned by its leaked enemies
-        // (splitters, summoners) included — so only the cap bounds it; everybody else never exceeds own leaks
-        const max = uniteRan && plan.leakers.includes(ps) ? cap : Math.min(cap, counted);
+        // (splitters, summoners) included — so only the cap bounds it; everybody else never exceeds own leaks. A leaker
+        // without a completed field pays its own leaks exactly.
+        const billed = ran.get(ps) === true;
+        const max = billed ? cap : Math.min(cap, counted);
         if (ps.alive) {
           const loss = lp0 - ps.lp;
           if (loss < 0) fail(`${ps.playerId}: LP rose in settle ${lp0} → ${ps.lp}`);
           if (loss > max) fail(`${ps.playerId}: lost ${loss} LP with ${counted} counted leaks (cap ${cap})`);
-          if (!uniteRan && loss !== max) fail(`${ps.playerId}: lost ${loss} LP, expected min(${cap}, ${counted})`);
+          if ((!uniteRan || ran.get(ps) === false) && loss !== max) fail(`${ps.playerId}: lost ${loss} LP, expected min(${cap}, ${counted})`);
           if (ps.lp <= 0) fail(`${ps.playerId}: alive with LP ${ps.lp}`);
         } else {
           // eliminated: LP is clamped to 0, so the loss was ≥ lp0 and still ≤ min(cap, counted)
@@ -447,29 +500,22 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
   });
   wrap(m, 'startFinalAssault', function (orig, hidden) {
     const alive = m.alivePlayers();
-    const before = m.bossPairs?.map(g => g.slice()) ?? null;
     const lpSum = alive.reduce((s, p) => s + Math.max(0, p.lp), 0);
     const teamLp0 = m.teamLp;
     const res = orig(hidden);
     runInvariants();
     check('final assault', () => {
       if (!alive.length) return;
-      const pairs = m.bossPairs || [];
-      const memberIds = pairs.flat();
-      if (pairs.length !== Math.ceil(alive.length / 2) || pairs.some(g => g.length < 1 || g.length > 2)
-        || new Set(memberIds).size !== memberIds.length
-        || JSON.stringify([...memberIds].sort()) !== JSON.stringify(alive.map(p => p.playerId).sort())) fail('boss pairing does not cover every alive player once');
-      if (before && before.flat().every(id => alive.some(p => p.playerId === id)) && before.flat().length === alive.length
-        && JSON.stringify(before) !== JSON.stringify(pairs)) fail('boss pairing changed after preparation');
-      const groups = pairs.map(g => g.join(','));
+      const groups = pairPlayers(alive).map((g) => g.map((p) => p.playerId).join(','));
       const fields = m.fields.map((f) => f.players.join(','));
-      if (JSON.stringify(groups) !== JSON.stringify(fields)) fail(`boss fields ${fields.join(' | ')} != saved pairs ${groups.join(' | ')}`);
+      if (JSON.stringify(groups) !== JSON.stringify(fields)) fail(`boss fields ${fields.join(' | ')} != seat pairs ${groups.join(' | ')}`);
       m.fields.forEach((f, i) => { if (f.fieldId !== `b${i + 1}`) fail(`boss field id ${f.fieldId}`); });
       if (!hidden && m.teamLp !== lpSum) fail(`team LP ${m.teamLp} != Σ alive LP ${lpSum}`);
       if (hidden && m.teamLp !== teamLp0) fail(`hidden core changed team LP ${teamLp0} → ${m.teamLp}`);
       const want = bossPoolHp(gd, hidden ? m.hiddenBossId : m.bossId, alive.length);
       if (!m.bossPool || m.bossPool.maxHp !== want) fail(`boss pool ${m.bossPool && m.bossPool.maxHp} != ${want}`);
-      if (hidden && !hiddenEligible(gd, { layerSum: m.hiddenLayerSum, teamLp: m.teamLp })) fail('hidden core entered while not eligible');
+      if (m.bossAlive !== alive.length) fail(`overtime counts ${m.bossAlive} alive, ${alive.length} started the boss phase`);
+      if (hidden && !hiddenEligible(gd, { layerSum: m.hiddenLayerSum, teamLp: m.teamLp, players: m.hiddenLayerPlayers })) fail('hidden core entered while not eligible');
       if (hidden && gd.difficulty === 'FUNNY') fail('hidden core on FUNNY');
     });
     return res;
@@ -480,7 +526,17 @@ export function attachAudit(m, { invariants = true, limit = 200 } = {}) {
       const r = m.lastResultMsg;
       if (!r) { fail('no m.result'); return; }
       const titles = r.players.map((p) => p.title && p.title.id).filter(Boolean);
-      if (new Set(titles).size !== titles.length) fail(`a title was given twice: ${titles}`);
+      // above 4 players (remake extension) a player the one-each pass left without a title may repeat one
+      const large = gd.isLargeRoom(r.players.length);
+      if (!large && new Set(titles).size !== titles.length) fail(`a title was given twice: ${titles}`);
+      const first = assignTitles(gd, [...m.players.values()].sort((a, b) => a.seat - b.seat), r.victory, { repeat: false });
+      const once = [...first.values()].map((t) => t.id);
+      if (new Set(once).size !== once.length) fail(`the one-each pass gave a title twice: ${once}`);
+      for (const p of r.players) {
+        const f = first.get(p.playerId);
+        if (f && (!p.title || p.title.id !== f.id)) fail(`${p.playerId}: title ${p.title && p.title.id}, the one-each pass gave ${f.id}`);
+        if (!f && p.title && !large) fail(`${p.playerId}: title ${p.title.id} outside the one-each pass`);
+      }
       const cfg = Array.isArray(gd.config.titles) ? gd.config.titles : [];
       for (const p of r.players) {
         const t = p.title && cfg.find((x) => x.id === p.title.id);

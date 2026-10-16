@@ -417,7 +417,7 @@ test('#4 full visible bench: transformation queues both the gained operator and 
   assert.equal(ps.deployCount, 0);
   assert.equal(m.pool.left(t2), left2 + 1, 'its copy went back to the pool');
   assert.ok(ps.temp.some((p) => p.id === t3), 'the gained operator remains in overflow');
-  assert.equal(m.pool.left(t3), left0 - 1, 'the queued operator retains its shared copy');
+  assert.equal(m.pool.left(t3), left0, 'the transformed operator occupies no purchase copies');
   assert.ok(!toasts.includes('整备区已满，获得的干员已返还'));
   assert.equal(ownedItems(ps, CELL).length, 1, 'the cell can be equipped again after refill');
   assert.equal(ps.temp.length, 7);

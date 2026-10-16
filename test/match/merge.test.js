@@ -179,7 +179,7 @@ test('displayed operator rewards survive stock exhaustion, respect a full hand a
   const id0 = offer.slots[0].id;
   const taken = m.pool.take(id0, 100);
   assert.deepEqual(m.handle('p_0', { t: 'g.reward', idx: 0 }), { ok: true });
-  assert.equal(m.pool.entries.get(id0).left, -1);
+  assert.equal(m.pool.entries.get(id0).left, 0, 'free rewards leave exhausted purchase stock unchanged');
   m.pool.give(id0, taken);
   ps.pushRewardOffer('merge', { ids: [id0] });
   const others = chessOfTier(3).filter((c) => m.pool.has(c) && !offer.slots.some((s) => s.id === c));
@@ -292,7 +292,7 @@ test('consume-on-equip built-ins: 盟约之币 funds, 随身身份牌 layers, �
   const holo = giveItem(m, ps, 'chess_item_5_06_e_b');
   m.handle('p_0', { t: 'g.equip', itemUid: holo.uid, targetUid: a.uid });
   assert.equal(a.id, DATA.chess[id].goldenId, 'golden 博士投影 promotes immediately');
-  assert.equal(a.poolCopies, 3);
+  assert.equal(a.poolCopies, 1, 'effect promotion preserves the purchased copy');
   const holo2 = giveItem(m, ps, 'chess_item_5_06_e_b');
   assert.equal(m.handle('p_0', { t: 'g.equip', itemUid: holo2.uid, targetUid: a.uid }).error, ERR.BAD_TARGET, 'already elite');
   // normal 博士投影: stays equipped, promotes at the next round start
@@ -366,7 +366,7 @@ test('a merge completed during SETTLE (突变细胞) keeps its reward offer for 
     ps.recompute();
     // the mutation's tier+1 roll can only give X
     const saved = new Map();
-    for (const [base, e] of m.pool.entries) if (e.tier === 2 && base !== X) { saved.set(base, e.left); e.left = 0; }
+    for (const [base, e] of m.pool.entries) if (e.tier === 2 && base !== X) { saved.set(base, e); m.pool.entries.delete(base); }
     const T = chessOfTier(1, (c) => !m.gd.placeableTokens(c.chessId).length).find((id) => m.pool.has(id));
     const holder = carrierAt === 'board' ? give(m, ps, T, 'board', legalTileFor(m, ps, T)) : give(m, ps, T);
     holder.items.push(ps.newPiece('item', 'chess_item_5_08_e_a'));
@@ -381,7 +381,7 @@ test('a merge completed during SETTLE (突变细胞) keeps its reward offer for 
     const settle = m.settle.bind(m);
     m.settle = (...a) => { const r = settle(...a); atSettle = { offers: ps.offers.map((o) => o.source), merges: ps.stats.merges }; return r; };
     h.toPrep(2);
-    for (const [base, left] of saved) m.pool.entries.get(base).left = left;
+    for (const [base, entry] of saved) m.pool.entries.set(base, entry);
     assert.deepEqual(atSettle, { offers: ['merge'], merges: 1 }, `${label}: the transform completed a merge in SETTLE`);
     const elite = ps.allChess().find((p) => p.id === m.gd.goldenIdOf(X));
     assert.ok(elite, 'the elite survived the round start');
