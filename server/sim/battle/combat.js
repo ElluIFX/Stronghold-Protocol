@@ -42,6 +42,9 @@ export class BattleCombat {
   // exposed for ai/content convenience
   effectiveProfile(u) { return effectiveProfile(u); }
 
+  /** Allocate one attack identity for content that performs attacks outside the ordinary attack loop. */
+  nextAttackId() { return ++this._attackSeq; }
+
   /**
    * Perform an immediate attack with a unit's current profile (content: "立即攻击", extra attacks, counters). It is an
    * attack in every respect (hooks, attack SP, a running ammo skill's bullet) — except with `noAmmo: true`: an extra

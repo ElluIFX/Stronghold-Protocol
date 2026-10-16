@@ -1179,6 +1179,9 @@ const DIY_EXCLUDED_TEAMS = Object.freeze(['rainbow', 'action4', 'mujica', 'sees'
  */
 const DIY_EXCLUDED_NUMBER_PREFIXES = Object.freeze(['MH', 'RS', 'AM', 'PS', 'DD']);
 
+/** Include the seven collaboration operators in this fork's owned six-star selection pool. */
+const FORK_INCLUDE_COLLAB_PICKS = true;
+
 /**
  * The skill a prototype carries in a 自选 slot when no 补位 row of the slot's tier names it (only 预备干员-医疗 at tier 5:
  * it stands in at tier 3 only). PRTS 卫戍协议 says the prototypes' "技能携带规则与系统补位时一致"; [ASSUMED] (the owner's
@@ -1368,8 +1371,9 @@ function buildBackups(ctx, chess) {
       && !ch.isNotObtainable && !roster.has(id);
   }).sort(naturalCmp);
   const collabNumber = (ch) => DIY_EXCLUDED_NUMBER_PREFIXES.some((p) => new RegExp(`^${p}\\d`).test(ch.displayNumber || ''));
-  const excluded = legal6.filter((id) => teamsOf(charTable[id]).some((t) => excludedTeams.has(t)) || collabNumber(charTable[id]));
-  for (const t of DIY_EXCLUDED_TEAMS) if (!excluded.some((id) => teamsOf(charTable[id]).includes(t))) warn(`DIY_EXCLUDED_TEAMS: no owned-6★ pick of team ${t}`);
+  const collab = legal6.filter((id) => teamsOf(charTable[id]).some((t) => excludedTeams.has(t)) || collabNumber(charTable[id]));
+  for (const t of DIY_EXCLUDED_TEAMS) if (!collab.some((id) => teamsOf(charTable[id]).includes(t))) warn(`DIY_EXCLUDED_TEAMS: no owned-6★ pick of team ${t}`);
+  const excluded = FORK_INCLUDE_COLLAB_PICKS ? [] : collab;
   const ownedPool = legal6.filter((id) => !excluded.includes(id));
   for (const id of ownedPool) for (const st of diyStatuses.values()) addNeed(id, st);
 

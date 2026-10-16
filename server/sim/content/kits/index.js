@@ -151,6 +151,13 @@ export const OPERATOR_KIT_FILES = Object.freeze([
   'op-kalts2.js',
   'op-monstr.js',
   'op-clemnt.js',
+  'op-ash.js',
+  'op-yato2.js',
+  'op-orchd2.js',
+  'op-ela.js',
+  'op-marcil.js',
+  'op-oblvns.js',
+  'op-makoto.js',
 ]);
 
 /**
