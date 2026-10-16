@@ -478,12 +478,11 @@ export function duckReplace(ctx, spawns, p, ownerPlayerId, { routes = null, side
 const duckGlobal = {
   onBattleStart(ctx, ev) {
     if (!ev || !DUCK_KINDS.has(ev.kind) || !Array.isArray(ev.spawns)) return;
-    const holders = [ctx, ...ctx.teammates()].filter(t => (t.gd.band(t.bandId())?.effectRef ?? t.bandId()) === DUCK_BAND);
-    for (const holder of holders) {
-      const p = duckParams(holder.bandId());
-      if (!p || ctx.round < int(p.round, 1)) continue;
-      duckReplace(ctx, ev.spawns, p, ctx.playerId, { routes: ev.routes, side: ev.side });
-    }
+    const holder = [ctx, ...ctx.teammates()].find(t => (t.gd.band(t.bandId())?.effectRef ?? t.bandId()) === DUCK_BAND);
+    if (!holder) return;
+    const p = duckParams(holder.bandId());
+    if (!p || ctx.round < int(p.round, 1)) return;
+    duckReplace(ctx, ev.spawns, p, ctx.playerId, { routes: ev.routes, side: ev.side });
   },
 };
 

@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeMatch } from './harness.js';
+import { createSDK } from '../../shared/plugins/sdk.js';
+import setupPlugin from '../../customizations/repeated-strategies/meta/index.js';
+
+setupPlugin(createSDK({ id: 'repeated-strategies', permissions: ['meta.code'] }));
 
 const BAND = 'band_ducklord';
 const ENEMY = 'enemy_1000_gopro_2';

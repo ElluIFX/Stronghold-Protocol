@@ -52,6 +52,7 @@ const nodeFiles = [
   'scripts/**/*.js',
   'scripts/**/*.mjs',
   'types/**/*.js',
+  'customizations/**/*.mjs',
 ];
 
 export default [
@@ -73,6 +74,11 @@ export default [
       sourceType: 'module',
       globals: { ...globals.node },
     },
+    rules,
+  },
+  {
+    files: ['customizations/**/sim/**/*.js', 'customizations/**/meta/**/*.js'],
+    languageOptions: { ecmaVersion: 2024, sourceType: 'module' },
     rules,
   },
   {

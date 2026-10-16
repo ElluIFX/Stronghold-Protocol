@@ -1,0 +1,24 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "manifest": 2,
+  "name": {
+    "zh": "重复策略效果",
+    "en": "Repeated strategies"
+  },
+  "version": "1.0.0",
+  "app": ">=0.3.0 <0.4.0",
+  "api": 1,
+  "class": "script",
+  "scope": [
+    "room"
+  ],
+  "id": "repeated-strategies",
+  "permissions": [
+    "sim.code",
+    "meta.code"
+  ],
+  "entry": {
+    "sim": "sim/index.js",
+    "meta": "meta/index.js"
+  }
+}

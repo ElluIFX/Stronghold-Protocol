@@ -1,0 +1,25 @@
+{
+  "lock": 1,
+  "id": "repeated-strategies",
+  "version": "1.0.0",
+  "generator": "tools/plugin.mjs pack",
+  "files": {
+    "meta/index.js": {
+      "sha256": "4ccfeee53ba4f3f579e72f8fd32f19bbac133257ff04987d2648c97ad8aba9a5",
+      "bytes": 4016
+    },
+    "plugin.json": {
+      "sha256": "8a55971de3e23174f18ff97ec43272be35298dfba36b16bd6ebbbbc22e7f0c67",
+      "bytes": 421
+    },
+    "sim/index.js": {
+      "sha256": "c58b04951b078d12b76b57b584f4de9923136d15d26648df639c66b249711cba",
+      "bytes": 1561
+    },
+    "test/effects.test.js": {
+      "sha256": "79ed08b9ca28d94f4a80e21b6724cab46c5566b4ea45d04445b1c5e64c9f7238",
+      "bytes": 1695
+    }
+  },
+  "spine": {}
+}

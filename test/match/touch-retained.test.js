@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { makeMatch } from './harness.js';
 import { Battle } from '../../server/sim/Battle.js';
 import { getDefaultSource } from '../../server/sim/simdata.js';
+import { createSDK } from '../../shared/plugins/sdk.js';
+import setupSim from '../../customizations/repeated-strategies/sim/index.js';
+import setupMeta from '../../customizations/repeated-strategies/meta/index.js';
+
+const sdk = createSDK({ id: 'repeated-strategies', permissions: ['sim.code', 'meta.code'] });
+setupSim(sdk);
+setupMeta(sdk);
 
 const MEDICS = new Set(['char_605_cmedic', 'char_613_acmedc']);
 const medics = b => b.allyUnits.filter(u => MEDICS.has(u.defId) && u.alive && !u.removed);

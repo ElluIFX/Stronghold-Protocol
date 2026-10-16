@@ -1,0 +1,360 @@
+{
+  "patch": 1,
+  "ops": [
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "stats",
+        "maxHp"
+      ],
+      "value": 2215.5
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "stats",
+        "atk"
+      ],
+      "value": 1232
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "stats",
+        "bat"
+      ],
+      "value": 1.5750000000000002
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "stats",
+        "def"
+      ],
+      "value": 400
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skill",
+        "bb",
+        "atk"
+      ],
+      "value": 0.4
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skills",
+        0,
+        "bb",
+        "extra_atk_scale"
+      ],
+      "value": 2
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skills",
+        0,
+        "bb",
+        "append_atk_scale"
+      ],
+      "value": 1
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skills",
+        1,
+        "bb",
+        "atk"
+      ],
+      "value": 0.4
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skills",
+        2,
+        "bb",
+        "attack@append_atk_scale"
+      ],
+      "value": 1
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skills",
+        2,
+        "bb",
+        "atk"
+      ],
+      "value": 0.5
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "skills",
+        2,
+        "bb",
+        "def"
+      ],
+      "value": 2
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_a",
+        "potDown",
+        "2",
+        "stats.atk"
+      ],
+      "value": 1168
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "stats",
+        "maxHp"
+      ],
+      "value": 3093
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "stats",
+        "atk"
+      ],
+      "value": 1520
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "stats",
+        "bat"
+      ],
+      "value": 1.5750000000000002
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "stats",
+        "def"
+      ],
+      "value": 460
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "statsBase",
+        "maxHp"
+      ],
+      "value": 2680.5
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "statsBase",
+        "atk"
+      ],
+      "value": 1370
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "statsBase",
+        "bat"
+      ],
+      "value": 1.5750000000000002
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "statsBase",
+        "def"
+      ],
+      "value": 460
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skill",
+        "bb",
+        "atk"
+      ],
+      "value": 0.6
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skills",
+        0,
+        "bb",
+        "extra_atk_scale"
+      ],
+      "value": 2.4
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skills",
+        0,
+        "bb",
+        "append_atk_scale"
+      ],
+      "value": 1
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skills",
+        1,
+        "bb",
+        "atk"
+      ],
+      "value": 0.6
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skills",
+        2,
+        "bb",
+        "attack@append_atk_scale"
+      ],
+      "value": 1
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skills",
+        2,
+        "bb",
+        "atk"
+      ],
+      "value": 0.8
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "skills",
+        2,
+        "bb",
+        "def"
+      ],
+      "value": 2
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "modules",
+        0,
+        "attr",
+        "maxHp"
+      ],
+      "value": 412.5
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "modules",
+        0,
+        "attr",
+        "atk"
+      ],
+      "value": 150
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "modules",
+        1,
+        "attr",
+        "atk"
+      ],
+      "value": 180
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "potDown",
+        "2",
+        "stats.atk"
+      ],
+      "value": 1456
+    },
+    {
+      "op": "set",
+      "file": "chess",
+      "path": [
+        "chess_char_6_12_b",
+        "potDown",
+        "2",
+        "statsBase.atk"
+      ],
+      "value": 1306
+    }
+  ]
+}

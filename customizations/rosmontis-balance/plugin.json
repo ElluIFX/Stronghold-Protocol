@@ -1,0 +1,21 @@
+{
+  "$schema": "../../schemas/plugin.schema.json",
+  "manifest": 2,
+  "name": {
+    "zh": "迷迭香数值调整",
+    "en": "Rosmontis balance"
+  },
+  "version": "1.0.0",
+  "app": ">=0.3.0 <0.4.0",
+  "api": 1,
+  "class": "content",
+  "scope": [
+    "room"
+  ],
+  "permissions": [
+    "data.patch"
+  ],
+  "data": [
+    "data/patch.json"
+  ]
+}

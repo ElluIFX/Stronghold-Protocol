@@ -1,0 +1,17 @@
+{
+  "lock": 1,
+  "id": "rosmontis-balance",
+  "version": "1.0.0",
+  "generator": "tools/plugin.mjs pack",
+  "files": {
+    "data/patch.json": {
+      "sha256": "94ad5812584e49189780d8efa7a44152d48d9570e04f4edf9e61bea63fdea620",
+      "bytes": 5774
+    },
+    "plugin.json": {
+      "sha256": "c3cfb8e2573b32c7ec1fbb14c1f0fec123459a4a6b136f0c3a1cbe610d22f3c0",
+      "bytes": 343
+    }
+  },
+  "spine": {}
+}

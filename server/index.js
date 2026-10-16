@@ -219,4 +219,11 @@ export async function startServer(opts = {}) {
 }
 
 // `node server/index.js` / npm start: listen, print the banner, stop on SIGINT / SIGTERM (http/boot.js).
-if (isProcessEntry(import.meta.url)) runMain(startServer);
+if (isProcessEntry(import.meta.url)) {
+  if (process.env.SP_CUSTOMIZATIONS !== 'off') {
+    const { installCustomizations } = await import('../customizations/install.mjs');
+    installCustomizations();
+    process.env.SP_PLUGIN_SCRIPTS ??= 'sandbox';
+  }
+  runMain(startServer);
+}

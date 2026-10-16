@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { makeBattle, chessRec, enemyRec, checkInvariants } from '../helpers/battleHarness.js';
 import { makeMatch } from '../match/harness.js';
 import { amedicStatMultiplier } from '../../shared/bandModifiers.js';
+import { createSDK } from '../../shared/plugins/sdk.js';
+import setup from '../../customizations/repeated-strategies/sim/index.js';
+import setupMeta from '../../customizations/repeated-strategies/meta/index.js';
+
+setup(createSDK({ id: 'repeated-strategies', permissions: ['sim.code'] }));
+setupMeta(createSDK({ id: 'repeated-strategies', permissions: ['meta.code'] }));
 
 const unit = (uid = 1) => ({ uid, kind: 'chess', chessId: 'repeat_op', row: 10, col: 4 });
 const player = (playerId, seat, bandId, extra = {}) => ({
@@ -158,7 +164,7 @@ test('eight Touch holders increase the actual first healing action by 2.75 while
 test('Touch counts live holders separately from a retained team grant and preserves opening aggro order', () => {
   for (const count of [0, 1, 2, 8]) {
     const h = makeBattle({ stageId: 'act2autochess_m01', autoFinish: false, defs,
-      players: [player('p1', 0, 'band_amedic', {
+      players: [player('p1', 0, count ? 'band_amedic' : 'band_sarkazb', {
         contentInfo: { matchBands: ['band_amedic'], liveMatchBands: Array(count).fill('band_amedic') },
       })] });
     h.step();
