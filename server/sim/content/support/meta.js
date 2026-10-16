@@ -27,6 +27,7 @@ export function registerSupportMeta(registry) {
       const rs = ctx.roundStats();
       const mates = ctx.teammates();
       const matchBands = [ctx.bandId(), ...mates.map(t => t.bandId())].filter(Boolean);
+      const liveMatchBands = matchBands.slice();
       // [ASSUMED] 外勤医疗 is a team grant for this match, not an aura revoked when its holder is eliminated.
       // Other team strategies and the teammate contexts still require a living player.
       if (ctx.teamMedicGranted?.() && !matchBands.includes('band_amedic')) matchBands.push('band_amedic');
@@ -42,6 +43,7 @@ export function registerSupportMeta(registry) {
           gainedChess: rs.gainedChess | 0, arts: rs.arts | 0,
         },
         matchBands,
+        liveMatchBands,
         teammates: mates.map((t) => ({ playerId: t.playerId, bandId: t.bandId() })),
       };
     },
