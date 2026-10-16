@@ -474,8 +474,8 @@ export const C2S = {
   // could not (the seat shows it). A room with gameplay plugins starts only once every player's page sent it for its cs
   'room.consent': { cs: isContentHash, accept: isBool },
   'room.contentReady': { cs: isContentHash, ok: isBool, $optional: ['ok'] },
-  'queue.join': { difficulty: (v) => DIFFICULTIES.includes(v) },
-  'queue.leave': {},
+  'room.queueJoin': { difficulty: (v) => DIFFICULTIES.includes(v) },
+  'room.queueLeave': {},
 
   // match
   'g.infoReady': { setupRevision: (v) => isInt(v, 0, 2 ** 31), $optional: ['setupRevision'] },

@@ -104,7 +104,11 @@ describe('the postMessage contract', () => {
       { v: 1, t: 'resize', height: '72' },
       { v: 2, t: 'ready' },
       { v: 1, t: 'g.buy', slot: 0 },
+      { v: 1, t: 'room.queueJoin', difficulty: 'NORMAL' },
+      { v: 1, t: 'room.queueLeave' },
       { v: 1, t: 'ready', nested: { t: 'g.buy' } },
+      { v: 1, t: 'ready', nested: { t: 'room.queueJoin', difficulty: 'NORMAL' } },
+      { v: 1, t: 'ready', nested: { t: 'room.queueLeave' } },
       null,
       'hello',
     ];
@@ -122,6 +126,10 @@ describe('the postMessage contract', () => {
     assert.equal(nested.reason, 'intent');
     const buy = validatePluginMessage({ v: 1, t: 'g.buy', slot: 0 });
     assert.equal(buy.reason, 'intent');
+    for (const type of ['room.queueJoin', 'room.queueLeave']) {
+      assert.equal(validatePluginMessage({ v: 1, t: type }).reason, 'intent', type);
+      assert.equal(validatePluginMessage({ v: 1, t: 'ready', nested: { t: type } }).reason, 'intent', `nested ${type}`);
+    }
     for (const key of Object.keys(C2S)) {
       assert.equal(isIntentType(key), true, key);
       const r = validatePluginMessage({ v: 1, t: key });

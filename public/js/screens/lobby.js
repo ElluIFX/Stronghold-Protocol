@@ -306,8 +306,8 @@ export function LobbyScreen() {
   const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
   // 匹配 (matchmaking queue): wait for other players of the same difficulty instead of hand-sharing a key. The ticker the
   // panel shows is driven by the server's queue.status frames (store.queue), so it survives a reconnect.
-  const queueJoin = () => run('queue', () => net.request('queue.join', { difficulty }));
-  const queueLeave = () => run('unqueue', () => net.request('queue.leave', {}));
+  const queueJoin = () => run('queue', () => net.request('room.queueJoin', { difficulty }));
+  const queueLeave = () => run('unqueue', () => net.request('room.queueLeave', {}));
   const join = (c = code) => {
     // `onClick=${join}` hands the click EVENT as the first argument, and a default parameter only applies to
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field

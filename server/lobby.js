@@ -761,8 +761,8 @@ export class Lobby {
       case 'room.setMode': return this.setMode(session, msg);
       case 'room.contentReady': return this.contentReady(session, msg, ctx);
       case 'room.consent': return this.consent(session,msg);
-      case 'queue.join': return this.queueJoin(session, msg);
-      case 'queue.leave': return this.queueLeave(session);
+      case 'room.queueJoin': return this.queueJoin(session, msg);
+      case 'room.queueLeave': return this.queueLeave(session);
       default:
         if (typeof msg.t === 'string' && msg.t.startsWith('g.')) return this.routeGameNow(session, msg);
         return fail(ERR.BAD_MSG, `unhandled type ${String(msg.t).slice(0, 32)}`);
@@ -837,7 +837,7 @@ export class Lobby {
   // ---------------------------------------------------------------------------------------------------
 
   /**
-   * queue.join { difficulty }: wait for other players instead of hand-sharing a 4-letter key. The queue is re-examined
+   * room.queueJoin { difficulty }: wait for other players instead of hand-sharing a 4-letter key. The queue is re-examined
    * every `queueTickMs`; a group is formed from the waiting sessions (the oldest entry's difficulty first) once it can
    * seat `queueMinSeats` humans and either everybody waited `queueGraceMs` or the oldest one waited `queueTimeoutMs`.
    * Every group gets a NEW 同盟 room (the members are seated through the same path as room.join) and the seats the queue
@@ -859,7 +859,7 @@ export class Lobby {
   }
 
   /**
-   * queue.leave: stop waiting. Never an error when the session was not queued (the client sends it on unload too), and it
+   * room.queueLeave: stop waiting. Never an error when the session was not queued (the client sends it on unload too), and it
    * always answers with the resulting `queue.status` — a client that cancelled must not be left waiting for a frame.
    * @param {any} session @param {{ quiet?: boolean }} [opts]
    */
@@ -941,7 +941,7 @@ export class Lobby {
       }
       const waited = now - head.since;
       // The grace runs from the LAST arrival, not from the head's own: a second player that is joining right now (its own
-      // queue.join is a round trip behind) must not be split off into a group of its own. A full group starts at once, and
+      // room.queueJoin is a round trip behind) must not be split off into a group of its own. A full group starts at once, and
       // the hard timeout still guarantees a lone player a room.
       const lastArrival = Math.max(head.since, ...this.queue.map((e) => e.since));
       const ready = members.length >= DEFAULT_SEATS

@@ -7,6 +7,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { startServer } from '../server/index.js';
 import { TestClient } from './helpers/wsClient.js';
@@ -19,33 +22,40 @@ const CODE_RE = new RegExp(`^[${CODE_ALPHABET}]{4}$`);
  * test's rooms can never be picked up by the next test's group. The clients it opened are closed afterwards.
  */
 async function withServer(over, fn) {
-  const srv = await startServer({
-    port: 0, host: '127.0.0.1', quiet: true,
-    queueTickMs: 30, queueMinSeats: 2, queueGraceMs: 120, queueTimeoutMs: 900, queueSilentMs: 5000,
-    ...over,
-  });
-  const ctx = { wsUrl: `ws://127.0.0.1:${srv.port}/ws`, httpUrl: `http://127.0.0.1:${srv.port}`, opened: [] };
-  const player = async (name) => {
-    const c = await TestClient.connect(ctx.wsUrl);
-    const w = await c.hello(name);
-    c.id = w.playerId;
-    c.token = w.token;
-    ctx.opened.push(c);
-    return c;
-  };
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-matchmaking-'));
+  const opened = [];
+  let srv;
   try {
+    srv = await startServer({
+      port: 0, host: '127.0.0.1', quiet: true, pluginsDir: path.join(temporary, 'plugins'),
+      queueTickMs: 30, queueMinSeats: 2, queueGraceMs: 120, queueTimeoutMs: 900, queueSilentMs: 5000,
+      ...over,
+    });
+    const ctx = { wsUrl: `ws://127.0.0.1:${srv.port}/ws`, httpUrl: `http://127.0.0.1:${srv.port}`, opened };
+    const player = async (name) => {
+      const c = await TestClient.connect(ctx.wsUrl);
+      opened.push(c);
+      const w = await c.hello(name);
+      c.id = w.playerId;
+      c.token = w.token;
+      return c;
+    };
     return await fn(player, ctx);
   } finally {
-    await Promise.all(ctx.opened.map((c) => c.terminate().catch(() => {})));
-    await srv.close();
+    try {
+      await Promise.all(opened.map((c) => c.terminate().catch(() => {})));
+      await srv?.close();
+    } finally {
+      fs.rmSync(temporary, { recursive: true, force: true });
+    }
   }
 }
 
 describe('matchmaking queue (匹配)', () => {
-  test('queue.join answers with queue.status; a lone player waits out the grace and is then matched alone', async () => {
+  test('room.queueJoin answers with queue.status; a lone player waits out the grace and is then matched alone', async () => {
     await withServer({}, async (player) => {
       const a = await player('MATCH-A');
-      await a.request({ t: 'queue.join', difficulty: 'HARD' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'HARD' });
       const status = await a.waitFor('queue.status', (m) => m.waiting);
       assert.equal(status.difficulty, 'HARD');
       assert.equal(status.count, 1);
@@ -76,8 +86,8 @@ describe('matchmaking queue (匹配)', () => {
     await withServer({}, async (player) => {
       const a = await player('MATCH-B1');
       const b = await player('MATCH-B2');
-      await a.request({ t: 'queue.join', difficulty: 'NORMAL' });
-      await b.request({ t: 'queue.join', difficulty: 'NORMAL' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'NORMAL' });
+      await b.request({ t: 'room.queueJoin', difficulty: 'NORMAL' });
       const [ma, mb] = await Promise.all([
         a.waitFor('queue.matched', () => true, 5000),
         b.waitFor('queue.matched', () => true, 5000),
@@ -96,32 +106,34 @@ describe('matchmaking queue (匹配)', () => {
   });
 
   test('the group is capped at 4 seats; the extra player keeps waiting (never silently dropped)', async () => {
-    await withServer({}, async (player) => {
+    await withServer({ queueGraceMs: 30_000, queueTimeoutMs: 30_000, queueSilentMs: 60_000 }, async (player) => {
       const cs = [];
       for (let i = 0; i < 5; i++) cs.push(await player(`MATCH-C${i + 1}`));
-      // join in order so the first four are certainly the oldest entries
-      for (const c of cs) {
-        await c.request({ t: 'queue.join', difficulty: 'ABYSS' });
-        await delay(40);
+      // A full group starts on the fourth join, before the long grace; request replies preserve arrival order.
+      for (const c of cs.slice(0, 4)) {
+        await c.request({ t: 'room.queueJoin', difficulty: 'ABYSS' });
       }
       const matched = await Promise.all(cs.slice(0, 4).map((c) => c.waitFor('queue.matched', () => true, 8000)));
       const codes = new Set(matched.map((m) => m.code));
       assert.equal(codes.size, 1, 'the first four form one room');
       assert.equal(matched.filter((m) => m.seated).length, 4, 'four players are seated');
       const fifth = cs[4];
+      await fifth.request({ t: 'room.queueJoin', difficulty: 'ABYSS' });
       const st = await fifth.waitFor('queue.status', (m) => m.waiting, 3000);
-      assert.ok(st.count >= 1, 'the fifth player is still in the queue (or waiting for the next group)');
+      assert.equal(st.count, 1, 'the fifth player waits for the next group');
+      assert.equal(st.total, 1);
+      assert.equal(fifth.log.some((m) => m.t === 'queue.matched'), false);
     });
   });
 
-  test('different difficulties are never mixed, and queue.leave stops the wait', async () => {
+  test('different difficulties are never mixed, and room.queueLeave stops the wait', async () => {
     // The grace / timeout of this suite are short (120 / 900 ms), so this test records what the two waiting sessions
     // actually saw instead of betting on one intermediate frame: the point is that HARD and FUNNY never share a group.
     await withServer({ queueTimeoutMs: 1200, queueGraceMs: 300, queueTickMs: 25 }, async (player) => {
       const a = await player('MATCH-D1');
       const b = await player('MATCH-D2');
-      await a.request({ t: 'queue.join', difficulty: 'HARD' });
-      await b.request({ t: 'queue.join', difficulty: 'FUNNY' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'HARD' });
+      await b.request({ t: 'room.queueJoin', difficulty: 'FUNNY' });
       await delay(200); // both entries are certainly in by now
       const aFrames = a.inbox.filter((m) => m.t === 'queue.status' && m.waiting);
       const bFrames = b.inbox.filter((m) => m.t === 'queue.status' && m.waiting);
@@ -132,12 +144,12 @@ describe('matchmaking queue (匹配)', () => {
       assert.ok(aFrames.some((f) => f.total === 2) || bFrames.some((f) => f.total === 2), `the queue reported both entries (${JSON.stringify(aFrames.at(-1))} / ${JSON.stringify(bFrames.at(-1))})`);
       assert.ok(aFrames.every((f) => f.count === 1), `only the same difficulty counts towards the group ${JSON.stringify(aFrames.at(-1))}`);
       // b leaves: it is answered at once, and a sees the queue shrink
-      await b.request({ t: 'queue.leave' });
+      await b.request({ t: 'room.queueLeave' });
       const gone = await b.waitFor('queue.status', (m) => m.waiting === false, 3000);
       assert.equal(gone.count, 0);
       const shrunk = await a.waitFor('queue.status', (m) => m.waiting && m.total === 1, 3000);
       assert.equal(shrunk.count, 1);
-      await a.request({ t: 'queue.leave' });
+      await a.request({ t: 'room.queueLeave' });
       const out = await a.waitFor('queue.status', (m) => m.waiting === false, 3000);
       assert.equal(out.count, 0);
     });
@@ -147,8 +159,8 @@ describe('matchmaking queue (匹配)', () => {
     await withServer({}, async (player, ctx) => {
       const a = await player('MATCH-E1');
       const b = await player('MATCH-E2');
-      await a.request({ t: 'queue.join', difficulty: 'NORMAL' });
-      await b.request({ t: 'queue.join', difficulty: 'NORMAL' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'NORMAL' });
+      await b.request({ t: 'room.queueJoin', difficulty: 'NORMAL' });
       await a.terminate();
       const status = await b.waitFor('queue.status', (m) => m.waiting && m.total === 1, 3000);
       assert.equal(status.count, 1, 'the dropped player is gone from the queue');
@@ -160,11 +172,11 @@ describe('matchmaking queue (匹配)', () => {
     });
   });
 
-  test('queue.join twice keeps one entry; creating a room by hand takes the session out of the queue', async () => {
+  test('room.queueJoin twice keeps one entry; creating a room by hand takes the session out of the queue', async () => {
     await withServer({}, async (player) => {
       const a = await player('MATCH-F');
-      await a.request({ t: 'queue.join', difficulty: 'FUNNY' });
-      await a.request({ t: 'queue.join', difficulty: 'FUNNY' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'FUNNY' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'FUNNY' });
       const status = await a.waitFor('queue.status', (m) => m.waiting);
       assert.equal(status.count, 1, 'no duplicate entry');
       await a.request({ t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
@@ -177,25 +189,25 @@ describe('matchmaking queue (匹配)', () => {
   test('healthz reports how many players are waiting', async () => {
     await withServer({}, async (player, ctx) => {
       const a = await player('MATCH-G');
-      await a.request({ t: 'queue.join', difficulty: 'NORMAL' });
+      await a.request({ t: 'room.queueJoin', difficulty: 'NORMAL' });
       await a.waitFor('queue.status', (m) => m.waiting);
       const body = await (await fetch(`${ctx.httpUrl}/healthz`)).json();
       assert.ok(Number.isInteger(body.queued) && body.queued >= 1, `healthz.queued ${JSON.stringify(body.queued)}`);
-      await a.request({ t: 'queue.leave' });
+      await a.request({ t: 'room.queueLeave' });
       await delay(80);
       const after = await (await fetch(`${ctx.httpUrl}/healthz`)).json();
       assert.equal(after.queued, 0);
     });
   });
 
-  test('queue.join is refused while a match runs (leave it first)', async () => {
+  test('room.queueJoin is refused while a match runs (leave it first)', async () => {
     await withServer({}, async (player) => {
       const a = await player('MATCH-H');
       await a.request({ t: 'room.create', mode: 'coop', difficulty: 'FUNNY' });
       await a.waitFor('room.state', (s) => s.hostId === a.id);
       await a.request({ t: 'room.start' });
       await a.waitFor('m.public', () => true, 5000);
-      const r = await a.request({ t: 'queue.join', difficulty: 'FUNNY' });
+      const r = await a.request({ t: 'room.queueJoin', difficulty: 'FUNNY' });
       assert.equal(r.t, 'error', JSON.stringify(r));
       assert.equal(r.code, 'ROOM_STARTED');
     });
