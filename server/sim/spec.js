@@ -469,7 +469,20 @@ export function fitResult(result, { bossLike = false, budget = RESULT_FRAME_BUDG
   for (const [pid, p] of Object.entries(result.perPlayer || {})) r.perPlayer[pid] = { ...p, unitStats: [] };
   if (size(r) <= budget) return r;
   for (const p of Object.values(r.perPlayer)) p.leaked = (p.leaked || []).map((l) => ({ ...l, mods: null }));
-  if (size(r) <= budget || !bossLike) return r;
+  if (size(r) <= budget) return r;
+  if (!bossLike) {
+    const lean = (l) => {
+      const o = { enemyKey: l.enemyKey };
+      if (l.sourcePlayerId != null) o.sourcePlayerId = l.sourcePlayerId;
+      if (l.counted === false) o.counted = false;
+      if (Number.isFinite(l.lpr) && l.lpr !== 1) o.lpr = l.lpr;
+      if (l.boss) o.boss = true;
+      return o;
+    };
+    for (const p of Object.values(r.perPlayer)) p.leaked = p.leaked.map(lean);
+    if (Array.isArray(r.unspawned)) r.unspawned = r.unspawned.map((u) => (u.sourcePlayerId != null ? { enemyKey: u.enemyKey, sourcePlayerId: u.sourcePlayerId } : { enemyKey: u.enemyKey }));
+    return r;
+  }
   for (const p of Object.values(r.perPlayer)) p.leaked = [];
   if (Array.isArray(r.unspawned)) r.unspawned = [];
   return r;
