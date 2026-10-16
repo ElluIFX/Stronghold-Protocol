@@ -133,6 +133,24 @@ test('bundled installation is repeatable, verifies locks and preserves an existi
   assert.equal(fs.readFileSync(file, 'utf8'), fs.readFileSync(path.join(ROOT, 'customizations/repeated-strategies/sim/index.js'), 'utf8'));
 });
 
+test('disabling scripts preserves the numeric content plugin and restores script defaults when enabled', t => {
+  const { pluginsDir } = installed(t);
+  installCustomizations({ pluginsDir, scriptMode: 'off' });
+  const policy = JSON.parse(fs.readFileSync(path.join(pluginsDir, 'config.json'), 'utf8'));
+  assert.deepEqual(policy.default, ['rosmontis-balance']);
+  const registry = createPluginRegistry({ publicDir: path.join(ROOT, 'public'), dataDir: path.join(ROOT, 'data'), pluginsDir },
+    { scriptMode: 'off', scriptHost: '0.0.0.0' });
+  registry.refresh(true);
+  const built = buildContentSet({ registry, ids: policy.default });
+  assert.deepEqual(built.problems, []);
+  const contents = createContentSets({ registry, vanillaData: getData() });
+  t.after(() => contents.close());
+  const resolved = contents.resolve(policy.default);
+  assert.ok(resolved.ok, JSON.stringify(resolved));
+  installCustomizations({ pluginsDir, scriptMode: 'sandbox' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(pluginsDir, 'config.json'), 'utf8')).default, [...CUSTOMIZATION_IDS]);
+});
+
 test('production sandbox executes repeated strategies and numeric data in its permission child', { timeout: 30000 }, async t => {
   const old = process.env.SP_PLUGIN_SCRIPTS;
   process.env.SP_PLUGIN_SCRIPTS = 'sandbox';

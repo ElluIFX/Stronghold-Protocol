@@ -10,11 +10,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const digest = file => fs.existsSync(file) ? createHash('sha256').update(fs.readFileSync(file)).digest('hex') : null;
 
 /** Install the versioned sources through the upstream packer and owner policy. */
-export function installCustomizations({ root = ROOT, pluginsDir = path.join(root, 'plugins') } = {}) {
+export function installCustomizations({ root = ROOT, pluginsDir = path.join(root, 'plugins'), scriptMode = process.env.SP_PLUGIN_SCRIPTS ?? 'sandbox' } = {}) {
   const dataDir = path.join(root, 'data');
   const read = name => JSON.parse(fs.readFileSync(path.join(dataDir, `${name}.json`), 'utf8'));
   fs.mkdirSync(pluginsDir, { recursive: true });
   const staging = fs.mkdtempSync(path.join(pluginsDir, '_bundled-'));
+  const target = path.resolve(staging);
+  if (path.dirname(target) !== path.resolve(pluginsDir) || !path.basename(target).startsWith('_bundled-')) {
+    throw new Error('Invalid bundled plugin staging directory');
+  }
   try {
     for (const id of CUSTOMIZATION_IDS) {
       const dir = path.join(staging, id);
@@ -40,18 +44,17 @@ export function installCustomizations({ root = ROOT, pluginsDir = path.join(root
     }
     const policyFile = path.join(pluginsDir, 'config.json');
     const policy = fs.existsSync(policyFile) ? JSON.parse(fs.readFileSync(policyFile, 'utf8')) : { rooms: 'fixed' };
-    const defaults = Array.isArray(policy.default) ? policy.default : [];
-    if (CUSTOMIZATION_IDS.some(id => !defaults.includes(id))) {
-      policy.default = [...new Set([...defaults, ...CUSTOMIZATION_IDS])];
+    const enabledIds = ['sandbox', 'trusted', 'trusted-force'].includes(scriptMode)
+      ? CUSTOMIZATION_IDS : CUSTOMIZATION_IDS.filter(id => id !== 'repeated-strategies');
+    const previous = Array.isArray(policy.default) ? policy.default : [];
+    const defaults = enabledIds.includes('repeated-strategies') ? previous : previous.filter(id => id !== 'repeated-strategies');
+    if (defaults.length !== previous.length || enabledIds.some(id => !defaults.includes(id))) {
+      policy.default = [...new Set([...defaults, ...enabledIds])];
       policy.classes = { content: true, script: true, ...policy.classes };
-      if (Array.isArray(policy.allow) && !policy.allow.includes('*')) policy.allow = [...new Set([...policy.allow, ...CUSTOMIZATION_IDS])];
+      if (Array.isArray(policy.allow) && !policy.allow.includes('*')) policy.allow = [...new Set([...policy.allow, ...enabledIds])];
       fs.writeFileSync(policyFile, JSON.stringify(policy, null, 2) + '\n');
     }
   } finally {
-    const target = path.resolve(staging);
-    if (path.dirname(target) !== path.resolve(pluginsDir) || !path.basename(target).startsWith('_bundled-')) {
-      throw new Error('Invalid bundled plugin staging directory');
-    }
     fs.rmSync(target, { recursive: true, force: true });
   }
 }

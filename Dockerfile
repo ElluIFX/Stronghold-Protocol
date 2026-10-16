@@ -29,6 +29,7 @@ FROM deps AS build
 ARG FETCH_ASSETS=0
 COPY shared ./shared
 COPY server ./server
+COPY customizations ./customizations
 COPY tools ./tools
 COPY data ./data
 COPY public ./public
@@ -54,6 +55,7 @@ COPY --from=deps /app/package.json ./package.json
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/server ./server
+COPY --from=build /app/customizations ./customizations
 COPY --from=build /app/data ./data
 COPY --from=build /app/public ./public
 # the Spine and atlas parsers the plugin packer and the plugin studio use (server/plugins/pack.js, server/studio/)
