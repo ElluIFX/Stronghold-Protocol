@@ -109,7 +109,7 @@ function withDom(rem, hudTop, fn) {
   const g = globalThis;
   const saved = { document: g.document, getComputedStyle: g.getComputedStyle };
   g.getComputedStyle = () => ({ fontSize: `${rem}px` });
-  g.document = { documentElement: {}, querySelector: (s) => (s === '.gm__hud' ? { getBoundingClientRect: () => ({ top: hudTop }) } : null) };
+  g.document = { documentElement: { classList: { contains: () => false } }, querySelector: (s) => (s === '.gm__hud' ? { getBoundingClientRect: () => ({ top: hudTop }) } : null) };
   try { return fn(); } finally { g.document = saved.document; g.getComputedStyle = saved.getComputedStyle; }
 }
 

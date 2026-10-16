@@ -173,7 +173,14 @@ describe('the folded board grows and every bench / temp tile stays clear of the 
         const foldCam = presetCamera(kind, { width: w, height: h }, { ...opts, shop: false, hud: foldHud });
         const tag = `${kind}${opts.side} ${w}×${h}`;
         const midRow = rows.back - 2;
-        assert.ok(tileAt(foldCam, midRow) > tileAt(openCam, midRow) * 1.15, `${tag}: grows (${tileAt(openCam, midRow).toFixed(1)} → ${tileAt(foldCam, midRow).toFixed(1)})`);
+        assert.equal(openHud.minZoom, coarse ? 1 : undefined, `${tag}: touch pieces keep their official scale with the shop open`);
+        if (coarse) {
+          const officialOpen = presetCamera(kind, { width: w, height: h }, { ...opts, shop: true });
+          assert.equal(openCam.scale, officialOpen.scale, `${tag}: the open touch camera does not zoom out`);
+        }
+        // Touch keeps the open board larger; folding still grows it while fitting every row between the HUD bands.
+        const growth = coarse ? 1 : 1.15;
+        assert.ok(tileAt(foldCam, midRow) > tileAt(openCam, midRow) * growth, `${tag}: grows (${tileAt(openCam, midRow).toFixed(1)} → ${tileAt(foldCam, midRow).toFixed(1)})`);
         const e = extents(foldCam, rows);
         // (projection.js clearHud keeps an official camera that overlaps a band by ≤ 0.5 px: float noise)
         assert.ok(e.benchBottom <= h - foldHud.bottom + 0.5 + 1e-6, `${tag}: bench ${e.benchBottom} above the folded band ${h - foldHud.bottom}`);

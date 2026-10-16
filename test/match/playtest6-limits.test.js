@@ -118,7 +118,7 @@ test('invariants: a bond above 999 is a violation (no writer may pass the cap)',
 const YAN = ['chess_char_6_15_a', 'chess_char_5_12_a', 'chess_char_4_17_a', 'chess_char_3_03_a'];
 /** Every enemy takes ×K damage — a stand-in for the 999-layer debuffs of a real board (谢拉格 ×11.34 vs cold / frozen,
  * 奥术 ×11.19 arts taken): with 炎 at 999 (ATK ×10.22) the hits land far past 300000. Once `relentAfter` leader hits
- * were cancelled the leaders lose the stand-in so the fight can finish. */
+ * were capped the leaders lose the stand-in so the fight can finish with ordinary damage too. */
 const K = 2000;
 function limitBattleClass(log, relentAfter = 6) {
   return class extends Battle {
@@ -143,19 +143,23 @@ function limitBattleClass(log, relentAfter = 6) {
         b.on('enemySpawn', ({ enemy }) => { if (!(enemy.isBoss && rec.relented)) b.addBuff(enemy, { key: 'test:999debuffs', mods: { dmgTakenMul: K } }); });
         b.on('damaged', (c) => {
           if (!c.target || !c.target.isBoss || c.type === 'element') return;
-          rec.leaderHits.push(c.amount);
+          rec.leaderHits.push({ amount: c.amount, source: c.source, credit: c.credit, sourceless: !!c.dmg?.sourceless });
         }, { priority: -1000 });
         if (b.sharedBoss) {
           const pool = b.sharedBoss;
           const dmg = pool.damage.bind(pool);
-          pool.damage = (pid, amount) => { rec.credits.push(amount); return dmg(pid, amount); };
+          pool.damage = (pid, amount) => {
+            const dealt = dmg(pid, amount);
+            rec.credits.push({ pid, amount, dealt });
+            return dealt;
+          };
         }
       } });
     }
   };
 }
 
-test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-run): every leader hit of ≥ 300000 deals 0 and nothing of it reaches the pool; the hits under the line win', () => {
+test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-run): oversized leader hits land at 300000 and retain damaged hooks and pool credit', () => {
   const h = makeMatch({ mode: 'solo', difficulty: 'HARD', seed: 76, fake: true, captureFrames: false, script: (b) => (b.kind === 'normal' ? { duration: 1 } : {}) });
   const m = h.m;
   m.bossId = 'boss_6';       // 阿利斯泰尔 walks into the board
@@ -185,7 +189,7 @@ test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-r
   h.drive(() => h.ended != null, { maxSteps: 8e6 }); // the Final Assault, the Hidden Core's prep (999 activated layers > 350) and fight
   const end = h.ended;
   assert.ok(end, `the match ended (${m.phase} R${m.round})`);
-  assert.ok(log.length >= 1, 'a real boss field ran');
+  assert.deepEqual(log.map(rec => rec.kind), ['boss', 'hidden'], 'both real boss rounds ran');
   const fa = log[0];
   assert.equal(fa.kind, 'boss');
   const input = fa.battle.getPlayer('p_0');
@@ -193,15 +197,24 @@ test('Final Assault + Hidden Core with a 999-layer 炎 board (real sim, server-r
   const op = fa.battle.allyUnits.find((u) => u.kind === 'op' && u.defId === YAN[0]);
   assert.ok(op, 'the operator fought');
   for (const rec of log) {
-    assert.ok(rec.caps.length > 0, `${rec.kind}: hits past the line were cancelled (${rec.caps.length})`);
-    assert.ok(rec.caps.every((n) => n >= BOSS_HIT_LIMIT));
-    assert.ok(rec.leaderHits.every((a) => Math.ceil(a) < BOSS_HIT_LIMIT), `${rec.kind}: no leader hit of ≥ 300000 landed (max ${Math.max(0, ...rec.leaderHits)})`);
-    assert.ok(rec.credits.every((a) => a < BOSS_HIT_LIMIT), `${rec.kind}: nothing ≥ 300000 reached the shared pool`);
-    assert.ok(rec.leaderHits.length > 0, `${rec.kind}: hits under the line landed`);
-    assert.equal(rec.battle.sharedBoss.hp, 0, `${rec.kind}: the pool was emptied by those`);
+    assert.ok(rec.caps.length > 0, `${rec.kind}: oversized hits emitted hitCap (${rec.caps.length})`);
+    assert.ok(rec.caps.every((n) => n > BOSS_HIT_LIMIT), 'hitCap reports the original oversized amount');
+    assert.ok(rec.leaderHits.every(({ amount }) => Number.isFinite(amount) && amount >= 0 && amount <= BOSS_HIT_LIMIT), `${rec.kind}: every damaged hook respects the cap`);
+    const capped = rec.leaderHits.filter(({ amount }) => amount === BOSS_HIT_LIMIT);
+    assert.ok(capped.length > 0, `${rec.kind}: capped damage still fires damaged hooks at 300000`);
+    for (const hit of capped) {
+      assert.equal(hit.credit?.ownerId, 'p_0', 'the attacking player retains credit');
+      assert.equal(hit.source, hit.sourceless ? null : hit.credit, 'sourceless damage hides its source while retaining credit');
+    }
+    assert.ok(rec.credits.every(({ amount }) => Number.isFinite(amount) && amount > 0 && amount <= BOSS_HIT_LIMIT), `${rec.kind}: every pool input respects the cap`);
+    assert.ok(rec.credits.some(({ pid, amount, dealt }) => pid === 'p_0' && amount === BOSS_HIT_LIMIT && dealt > 0), `${rec.kind}: a capped hit removes pool HP for its owner`);
+    const credited = rec.credits.filter(({ pid }) => pid === 'p_0').reduce((sum, hit) => sum + hit.dealt, 0);
+    assert.equal(rec.battle.sharedBoss.byPlayer.get('p_0'), credited, 'the shared pool records actual damage for the attacker');
+    assert.ok(Math.abs(rec.battle._pp('p_0').bossDamage - credited) < 1e-6, 'battle settlement preserves the same boss damage credit');
+    assert.equal(rec.battle.sharedBoss.hp, 0, `${rec.kind}: capped and ordinary hits emptied the pool`);
     assert.equal(rec.battle.reason, 'cleared');
   }
-  assert.equal(end.victory, true, 'the board still won once its hits stayed under the line');
+  assert.equal(end.victory, true, 'the board wins with capped hits');
   assert.equal(m.errorCount, 0);
   m.dispose();
 });
