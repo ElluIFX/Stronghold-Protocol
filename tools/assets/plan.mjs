@@ -70,6 +70,9 @@ export const ENEMY_SPINE_ALIAS = Object.freeze({
   enemy_1305_mhslim_2: 'enemy_1007_slime',
 });
 
+/** Public web-model variant used when a summon has no model under its base identity. */
+export const TOKEN_SKIN_SPINES = Object.freeze({ token_10033_ela_grzmot: 'token_10033_ela_grzmot_rainbow6_2' });
+
 /** Loading illustrations referenced by act2autochess modeDataDict (non-training). */
 const LOADING_USED = new Set(['loading_ac_core', 'loading_ac_prototype', 'loading_ac_hard', 'loading_ac_abyss']);
 
@@ -350,7 +353,7 @@ export function collectEnemyIds({ assets07, enemies05, maps05, ops03 }) {
 export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsData, charword = null, voiceLang = 'cn',
   voiceJp = true, voiceSlots = VOICE_BATTLE_SLOTS, optionalVoice = false,
   extraEnemyIds = [], extraTokenIds = [], extraHandbook = {}, localEnemySpines = {}, localTokenSpines = {}, extraOperators = {},
-  moduleTypes = [], statsTemplate = [] }) {
+  moduleTypes = [], statsTemplate = [], tokenSkinSpines = TOKEN_SKIN_SPINES }) {
   const notes = [];
   /** @type {Map<string, any>} */
   const models = new Map();
@@ -460,10 +463,11 @@ export function buildPlan({ assets07, ops03, enemies05, maps05, audio, modelsDat
   for (const id of extraTokenIds) if (typeof id === 'string' && /^token_\d+_[a-z0-9_]+$/i.test(id)) tokenIds.add(id);
   for (const id of [...tokenIds].sort()) {
     // Tokens unknown to research 07: default avatar/Spine locations (misses are tolerated).
+    const skin = tokenSkinSpines && Object.hasOwn(tokenSkinSpines, id) ? tokenSkinSpines[id] : null;
     const t = assets07?.tokens?.[id] ?? {
       avatar: { url: `${RAW.yuanyan}avatar/${id}.png` },
       battleSpineDefault: null,
-      battleSpineSkinVariantsOnly: [id],
+      battleSpineSkinVariantsOnly: [skin || id],
     };
     const usedBy = ops03?.tokensUsedByPool?.[id]?.usedByChess || [];
     const ownerChess = usedBy.map((cid) => chessById.get(cid)).find(Boolean);

@@ -12,7 +12,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataExtras, orphanFiles, parseArgs } from '../tools/fetch-assets.mjs';
 import { patternOperator, buildPlan } from '../tools/assets/plan.mjs';
-import { indexAudio } from '../tools/assets/audio.mjs';
+import { indexAudio, VOICE_BATTLE_SLOTS } from '../tools/assets/audio.mjs';
 import { Downloader } from '../tools/assets/downloader.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -111,18 +111,37 @@ test('the committed data/assets.json lists every 自选 operator\'s avatar, port
   assert.equal(m.stats.modules, Object.keys(m.modules).length);
 });
 
-test('an operator left out of 自选 (data/backups.json diy.excluded: the collab picks, 焰狐龙梓兰 MH05 among them) keeps no art in data/assets.json, so the full release zip (tools/package.mjs) never ships it', () => {
+test('all seven collaboration picks have portraits, battle models, icons, audio and summon resources', () => {
   const m = load('assets');
-  const text = JSON.stringify(m);
-  assert.ok(BACKUPS.diy.excluded.includes('char_1048_orchd2'), '焰狐龙梓兰 is excluded');
-  for (const id of BACKUPS.diy.excluded) {
-    const code = id.split('_').slice(2).join('_');
-    assert.equal(m.chars[id], undefined, `${id}: chars`);
-    assert.equal(m.audio.sfx.units[id], undefined, `${id}: unit sfx`);
-    assert.equal(m.audio.voice?.[id], undefined, `${id}: voice`);
-    assert.ok(!Object.keys(m.skills).some((k) => k.startsWith(`skchr_${code}_`)), `${id}: skill icons`);
-    assert.ok(!text.includes(id), `${id}: no file of theirs`);
+  const ids = ['char_456_ash', 'char_1029_yato2', 'char_1048_orchd2', 'char_4123_ela', 'char_4141_marcil', 'char_4182_oblvns', 'char_4217_makoto'];
+  const disk = existsSync(join(ROOT, 'public', 'assets', 'char'));
+  const onDisk = (u) => !disk || existsSync(join(ROOT, 'public', u));
+  assert.deepEqual(BACKUPS.diy.excluded, []);
+  for (const id of ids) {
+    assert.ok(BACKUPS.diy.ownedPool.includes(id), id);
+    const c = m.chars[id];
+    for (const key of ['avatar', 'avatarE2', 'portrait', 'portraitE2']) assert.ok(c?.[key] && onDisk(c[key]), `${id}: ${key}`);
+    for (const side of ['front', 'back']) {
+      const spine = c.spine?.[side];
+      assert.ok(spine?.skel, `${id}: ${side} model`);
+      for (const url of [spine.skel, spine.atlas, ...spine.textures]) assert.ok(onDisk(url), `${id}: ${url}`);
+    }
+    assert.deepEqual(Object.keys(c.spine.front.anims.skills).sort(), ['0', '1', '2']);
+    for (const form of Object.values(BACKUPS.units[id].forms)) {
+      for (const skill of form.skills) assert.ok(m.skills[m.skillsById[skill.skillId]] || m.skills[skill.iconId], `${id}: ${skill.skillId}`);
+      for (const mod of form.modules || []) assert.ok(m.modules[mod.typeIcon] && onDisk(m.modules[mod.typeIcon]), `${id}: ${mod.typeIcon}`);
+    }
+    assert.ok(m.audio.sfx.units[id]?.attack, `${id}: attack sound`);
+    assert.ok(m.audio.voiceJp[id], `${id}: Japanese voice`);
+    for (const voice of [m.audio.voice[id], m.audio.voiceJp[id]].filter(Boolean)) {
+      assert.deepEqual(Object.keys(voice).sort(), [...VOICE_BATTLE_SLOTS].sort(), id);
+      for (const url of Object.values(voice).flat()) assert.ok(onDisk(url), `${id}: ${url}`);
+    }
   }
+  const mine = m.tokens.token_10033_ela_grzmot;
+  assert.ok(mine?.avatar && onDisk(mine.avatar));
+  assert.equal(mine.spineVariant, 'token_10033_ela_grzmot_rainbow6_2');
+  for (const url of [mine.spine.skel, mine.spine.atlas, ...mine.spine.textures]) assert.ok(onDisk(url), url);
   assert.equal(m.stats.chars, Object.keys(m.chars).length);
   assert.equal(m.stats.skills, Object.keys(m.skills).length);
 });
