@@ -12,7 +12,7 @@ test('four already displayed operator offers may exceed stock; selling first rep
   const h = makeMatch({ mode: 'coop', humans: 4, seed: 11, fake: true }).start().toPrep();
   const m = h.m, id = byName('溯光星源'), ps = [...m.players.values()];
   assert.equal(m.pool.cap(id), 10);
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) ps[i].acquireChess(id);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) ps[i].acquireChess(id, { fromPool: true });
   assert.equal(m.pool.left(id), 1);
   for (const p of ps) {
     p.funds = 100;
@@ -34,18 +34,21 @@ test('four already displayed operator offers may exceed stock; selling first rep
   }
   m.dispose();
 });
-test('a duplicate draft card becomes unavailable when the preceding player exhausts equipment stock', () => {
+test('duplicate free draft cards remain available after purchase stock is exhausted', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
   const m = h.m, a = h.ps('p_0'), b = h.ps('p_1');
-  a.acquireItem(PACK);
+  a.acquireItem(PACK, { fromPool: true });
+  a.acquireItem(PACK, { fromPool: true });
+  assert.equal(m.itemPool.left(PACK), 0);
   m.phase = PHASE.SP_DRAFT;
   m.sp = { cards: [PACK, PACK, 'chess_item_1_01_e_a'].map((id, idx) => ({ idx, id, kind: 'item' })),
     order: ['p_0', 'p_1'], idx: 0, picks: {}, taken: {}, untimed: true };
   assert.ok(m.pickCard(a, 0).ok); assert.equal(m.spTurn(), 'p_1');
-  assert.equal(m.pickCard(b, 1).error, 'SOLD_OUT'); assert.equal(m.sp.picks.p_1, undefined);
-  const card = m.publicView().sp.cards[1]; assert.equal(card.soldOut, true);
-  assert.equal(cardPickable({ turnPid: 'p_1', pickOf: new Map() }, card, { myId: 'p_1', solo: false }), false);
-  assert.ok(m.pickCard(b, 2).ok); m.dispose();
+  const card = m.publicView().sp.cards[1]; assert.notEqual(card.soldOut, true);
+  assert.equal(cardPickable({ turnPid: 'p_1', pickOf: new Map() }, card, { myId: 'p_1', solo: false }), true);
+  assert.ok(m.pickCard(b, 1).ok);
+  assert.equal(m.itemPool.held(PACK), 2, 'both free picks occupy zero additional purchase copies');
+  checkInvariants(m); m.dispose();
 });
 test('measured operator capacities and exceptions: co-op doubles shared stock and each player\'s private 自选 stock (#650)', () => {
   const solo = new GameData(DATA, 'mode_single_normal'), coop = new GameData(DATA, 'mode_multi_normal');
@@ -59,15 +62,17 @@ test('measured operator capacities and exceptions: co-op doubles shared stock an
   assert.equal(solo.itemPoolCopies(PACK), 2); assert.equal(coop.itemPoolCopies(PACK), 2);
 });
 
-test('an operator reward shown before stock exhaustion still arrives and records its copy', () => {
+test('an operator reward arrives after stock exhaustion without occupying another copy', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
   const m = h.m, a = h.ps('p_0'), b = h.ps('p_1'), id = byName('溯光星源');
   a.pushRewardOffer('test', { ids: [id] });
-  for (let i = 0; i < m.pool.cap(id); i++) b.acquireChess(id);
+  for (let i = 0; i < m.pool.cap(id); i++) b.acquireChess(id, { fromPool: true });
   assert.equal(m.pool.left(id), 0);
   assert.ok(a.pickReward(0).ok); assert.equal(a.offers.length, 0);
   assert.ok(a.allChess().some(c => c.id === id));
-  assert.equal(m.pool.entries.get(id).left, -1); checkInvariants(m); m.dispose();
+  assert.equal(m.pool.entries.get(id).left, 0);
+  assert.equal(a.allChess().find(c => c.id === id).poolCopies, 0);
+  checkInvariants(m); m.dispose();
 });
 
 test('shared equipment occupancy includes hand/equipped/elite, never displayed offers; destroying frees stock', () => {
@@ -77,9 +82,9 @@ test('shared equipment occupancy includes hand/equipped/elite, never displayed o
   a.funds = 10; const slot = a.shop.slots.findIndex(s => s?.kind === 'item');
   assert.ok(slot >= 0); a.shop.slots[slot] = { kind: 'item', id: PACK, basePrice: 1, sold: false, frozen: true };
   a.pushItemOffer([PACK]); assert.equal(m.itemPool.left(PACK), 2, 'display reserves nothing');
-  const x = a.acquireItem(PACK), y = b.acquireItem(PACK); assert.ok(x && y);
+  const x = a.acquireItem(PACK, { fromPool: true }), y = b.acquireItem(PACK, { fromPool: true }); assert.ok(x && y);
   assert.equal(m.itemPool.left(PACK), 0);
-  // Buying or claiming those displayed cards while empty is the debt test below. This one keeps them on screen
+  // Buying displayed cards while empty is the debt test below. This one keeps them on screen
   // and checks occupancy: equipping and selling do not free stock.
   const id = [...m.pool.entries.keys()].find(id => m.gd.tierOf(id) === 1), owner = give(m, a, id);
   assert.ok(a.equip(x.uid, owner.uid).ok); assert.equal(m.itemPool.held(PACK), 2);
@@ -88,7 +93,7 @@ test('shared equipment occupancy includes hand/equipped/elite, never displayed o
   assert.ok(a.buy(slot).ok, 'a third purchase is legal after one of the two owned copies was destroyed');
   assert.equal(m.itemPool.left(PACK), 0);
   b.eliminate(1); assert.equal(m.itemPool.left(PACK), 1);
-  const gold = a.acquireItem(PACK); assert.ok(gold && m.gd.isGolden(gold.id));
+  const gold = a.acquireItem(PACK, { fromPool: true }); assert.ok(gold && m.gd.isGolden(gold.id));
   assert.equal(m.itemPool.held(PACK), 2, 'one upgraded item occupies two normal copies');
   assert.ok(a.destroy(gold.uid).ok); assert.equal(m.itemPool.left(PACK), 2);
   checkInvariants(m); m.dispose();
@@ -107,8 +112,8 @@ test('already displayed equipment stays buyable after stock runs out; release re
   a.pushItemOffer([PACK]);
   assert.equal(a.offers[0].slots[0].id, PACK);
   assert.equal(m.itemPool.left(PACK), 2, 'display reserves nothing');
-  assert.ok(b.acquireItem(PACK));
-  assert.ok(b.acquireItem(PACK), 'the second copy merges into the golden and fills the cap');
+  assert.ok(b.acquireItem(PACK, { fromPool: true }));
+  assert.ok(b.acquireItem(PACK, { fromPool: true }), 'the second purchase merges into the golden and fills the cap');
   assert.equal(m.itemPool.left(PACK), 0);
   assert.equal(m.itemPool.debtOf(PACK), 0);
   const funds = a.funds;
@@ -122,37 +127,32 @@ test('already displayed equipment stays buyable after stock runs out; release re
   assert.equal(m.itemPool.left(PACK), 0);
   const normal = [...a.hand, ...a.temp].find((p) => p && m.gd.baseIdOf(p.id) === PACK);
   assert.ok(normal && !m.gd.isGolden(normal.id));
-  assert.equal(a.upgradeItem(normal), false, '整备 stays limited once nothing is free');
-  assert.equal(m.gd.isGolden(normal.id), false);
-  assert.equal(a.acquireItem(PACK), null, 'a random grant is still refused');
-  assert.equal(m.itemPool.debtOf(PACK), 1);
   assert.ok(a.pickReward(0).ok, 'the displayed reward stays claimable');
   assert.equal(a.offers.length, 0);
-  // The reward completes a's pair, so the two normals become one golden: occupancy +1, the same as the incoming need.
-  assert.equal(m.itemPool.debtOf(PACK), 2);
-  assert.equal(m.itemPool.held(PACK), 4);
+  // The free reward completes the pair and the golden retains only the purchased input's copy.
+  assert.equal(m.itemPool.debtOf(PACK), 1);
+  assert.equal(m.itemPool.held(PACK), 3);
   assert.equal(m.itemPool.left(PACK), 0);
   checkInvariants(m);
   for (let i = 0; i < 40; i++) {
     assert.notEqual(m.pool.rollItem(m.rngShop, 6, m.itemPool), PACK);
-    assert.notEqual(m.rollItemId({ pool: 'pool_equip_normal', shopLevel: 6 }), PACK);
   }
   const beforeB = b.funds;
   assert.ok(b.buy(slotB).ok, 'the other player\'s displayed card is its own purchase');
   assert.equal(b.funds, beforeB - 1);
   assert.equal(b.buy(slotB).error, 'SOLD_OUT');
   // b already holds the golden, so this normal does not merge.
-  assert.equal(m.itemPool.debtOf(PACK), 3);
-  assert.equal(m.itemPool.held(PACK), 5);
+  assert.equal(m.itemPool.debtOf(PACK), 2);
+  assert.equal(m.itemPool.held(PACK), 4);
   checkInvariants(m);
   const carrierId = [...m.pool.entries.keys()].find((id) => m.gd.tierOf(id) === 1);
   const carrier = give(m, b, carrierId);
   const worn = [...b.hand, ...b.temp].find((p) => p && p.kind === 'item' && !m.gd.isGolden(p.id) && m.gd.baseIdOf(p.id) === PACK);
   assert.ok(b.equip(worn.uid, carrier.uid).ok);
-  assert.equal(m.itemPool.debtOf(PACK), 3, 'equipping moves the copy; it does not repay');
+  assert.equal(m.itemPool.debtOf(PACK), 2, 'equipping moves the copy; it does not repay');
   assert.ok(b.sell(carrier.uid).ok);
-  assert.equal(m.itemPool.held(PACK), 5, 'selling returns equipment to the hand');
-  assert.equal(m.itemPool.debtOf(PACK), 3);
+  assert.equal(m.itemPool.held(PACK), 4, 'selling returns equipment to the hand');
+  assert.equal(m.itemPool.debtOf(PACK), 2);
   const returned = [...b.hand, ...b.temp].find((p) => p && p.kind === 'item' && !m.gd.isGolden(p.id) && m.gd.baseIdOf(p.id) === PACK);
   const tempAt = b.temp.findIndex((p) => p == null);
   assert.ok(tempAt >= 0);
@@ -161,8 +161,8 @@ test('already displayed equipment stays buyable after stock runs out; release re
   b.hand[handAt] = null;
   b._putTemp(tempAt, returned);
   b.resolveTemp();
-  assert.equal(m.itemPool.debtOf(PACK), 2, 'a temp wipe repays one copy and leaves the rest of the debt');
-  assert.equal(m.itemPool.held(PACK), 4);
+  assert.equal(m.itemPool.debtOf(PACK), 1, 'a temp wipe repays one copy and leaves the rest of the debt');
+  assert.equal(m.itemPool.held(PACK), 3);
   assert.equal(m.itemPool.left(PACK), 0);
   checkInvariants(m);
   const aGold = [...a.hand, ...a.temp].find((p) => p && m.gd.isGolden(p.id) && m.gd.baseIdOf(p.id) === PACK);
@@ -180,28 +180,28 @@ test('already displayed equipment stays buyable after stock runs out; release re
   m.dispose();
 });
 
-test('a displayed golden reward records only the copies that did not fit', () => {
+test('a free golden reward occupies no copies while purchase stock is partly occupied', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
   const m = h.m, a = h.ps('p_0'), b = h.ps('p_1');
   const gold = m.gd.item(PACK).goldenId || m.gd.item(PACK).upgradeChessId;
   assert.ok(gold && m.gd.isGolden(gold));
   assert.equal(m.itemPool.need(gold), 2);
   assert.ok(a.pushItemOffer([gold]), 'a golden still fits while both copies are free');
-  assert.ok(b.acquireItem(PACK));
+  assert.ok(b.acquireItem(PACK, { fromPool: true }));
   assert.equal(m.itemPool.left(PACK), 1);
   assert.ok(a.pickReward(0).ok);
-  assert.equal(m.itemPool.debtOf(PACK), 1);
-  assert.equal(m.itemPool.held(PACK), 3);
-  assert.equal(m.itemPool.left(PACK), 0);
+  assert.equal(m.itemPool.debtOf(PACK), 0);
+  assert.equal(m.itemPool.held(PACK), 1);
+  assert.equal(m.itemPool.left(PACK), 1);
   checkInvariants(m);
   m.dispose();
 });
 
-test('整备 does not upgrade a purchase that would exceed the shared item cap', () => {
+test('整备 upgrades a purchase at the shared cap without taking another copy', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
   const m = h.m, a = h.ps('p_0'), b = h.ps('p_1');
   const KEY = 'effect:builtin_next_buy_golden_item';
-  assert.ok(b.acquireItem(PACK));
+  assert.ok(b.acquireItem(PACK, { fromPool: true }));
   assert.equal(m.itemPool.left(PACK), 1);
   a.effects.push({ id: 'zb', key: KEY, name: '整备', counter: 1, battle: false });
   a.funds = 50;
@@ -211,8 +211,9 @@ test('整备 does not upgrade a purchase that would exceed the shared item cap',
   assert.ok(a.buy(slot).ok);
   const piece = [...a.hand, ...a.temp].find((p) => p && m.gd.baseIdOf(p.id) === PACK);
   assert.ok(piece);
-  assert.equal(m.gd.isGolden(piece.id), false, 'the last copy stays normal');
-  assert.equal(a.effects.find((e) => e.key === KEY).counter, 1, 'the charge is kept');
+  assert.equal(m.gd.isGolden(piece.id), true, 'the last purchased copy may become golden');
+  assert.equal(piece.poolCopies, 1, 'the free upgrade retains its one purchased copy');
+  assert.equal(a.effects.some((e) => e.key === KEY), false, 'the charge is spent');
   assert.equal(m.itemPool.held(PACK), m.itemPool.cap(PACK));
   checkInvariants(m);
   const owned = [...b.hand, ...b.temp].find((p) => p && m.gd.baseIdOf(p.id) === PACK);
@@ -222,7 +223,7 @@ test('整备 does not upgrade a purchase that would exceed the shared item cap',
   m.dispose();
 });
 
-test('整备 upgrades when the extra golden copy fits, including an uncapped item', () => {
+test('整备 upgrades capped and uncapped purchases without topping up their stock', () => {
   const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
   const m = h.m, a = h.ps('p_0');
   const KEY = 'effect:builtin_next_buy_golden_item';
@@ -237,7 +238,7 @@ test('整备 upgrades when the extra golden copy fits, including an uncapped ite
   assert.ok(a.buy(slot).ok);
   const piece = [...a.hand, ...a.temp].find((p) => p && m.gd.baseIdOf(p.id) === PACK);
   assert.ok(piece && m.gd.isGolden(piece.id));
-  assert.equal(m.itemPool.held(PACK), 2);
+  assert.equal(m.itemPool.held(PACK), 1);
   assert.equal(a.effects.some((e) => e.key === KEY), false, 'the charge is spent');
   a.effects.push({ id: 'zb2', key: KEY, name: '整备', counter: 1, battle: false });
   const slot2 = slot === 0 ? 1 : 0;
@@ -254,25 +255,26 @@ test('consumed equipment releases its stock; effect-only items have no shared sh
   const h = makeMatch({ mode: 'solo', seed: 11, fake: true }).start().toPrep();
   const m = h.m, p = h.ps('p_0'), id = [...m.pool.entries.keys()][0], owner = give(m, p, id);
   const item = 'chess_item_1_04_e_a', before = m.itemPool.left(item);
-  const piece = p.acquireItem(item); assert.ok(piece); assert.equal(m.itemPool.left(item), before - 1);
+  const piece = p.acquireItem(item, { fromPool: true }); assert.ok(piece); assert.equal(m.itemPool.left(item), before - 1);
   assert.ok(p.equip(piece.uid, owner.uid).ok); assert.equal(p.find(piece.uid), null); assert.equal(m.itemPool.left(item), before);
   assert.equal(m.itemPool.cap('chess_item_2_03_e_a'), null);
   checkInvariants(m); m.dispose();
 });
 
-test('Mimic can exceed the pool; excess copies keep stock empty until enough ownership leaves', () => {
+test('Mimic grants a free copy while merged purchases retain their original stock occupation', () => {
   const h = makeMatch({ mode: 'solo', difficulty: 'NORMAL', seed: 11, fake: true }).start().toPrep();
   const m = h.m, p = h.ps('p_0');
   const id = [...m.pool.entries.keys()].find(id => m.gd.tierOf(id) === 6);
   assert.equal(m.pool.cap(id), 5);
-  for (let i = 0; i < 5; i++) p.acquireChess(id);
+  for (let i = 0; i < 5; i++) p.acquireChess(id, { fromPool: true });
   const target = p.allChess().find(c => c.id === id);
   assert.ok(target); assert.equal(m.pool.left(id), 0);
   const mimic = p.acquireItem('chess_item_5_05_e_a'); assert.ok(mimic);
   assert.ok(p.equip(mimic.uid, target.uid).ok);
   assert.equal(p.allChess().filter(c => m.gd.baseIdOf(c.id) === id).length, 2);
-  assert.equal(m.pool.entries.get(id).left, -1);
+  assert.equal(m.pool.entries.get(id).left, 0);
   assert.equal(m.pool.left(id), 0); checkInvariants(m);
   const elite = p.allChess().find(c => m.gd.baseIdOf(c.id) === id);
-  assert.ok(p.sell(elite.uid).ok); assert.equal(m.pool.left(id), 2); checkInvariants(m); m.dispose();
+  const purchasedCopies = elite.poolCopies;
+  assert.ok(p.sell(elite.uid).ok); assert.equal(m.pool.left(id), purchasedCopies); checkInvariants(m); m.dispose();
 });
