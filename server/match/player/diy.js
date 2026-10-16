@@ -17,8 +17,7 @@
 //   * the per-player stock (initDiyStock, called by the match once its bans are drawn): each slotted DIY piece has copies
 //     of its own — the tier's pool copies, 8 at tier 5 and 5 at tier 6 [ASSUMED: research 0.2.0 §2.5, the excel has no
 //     stock field] — drawn by this player only; it never enters the shared pool (PR #71's shared shop was the mistake to
-//     avoid); in co-op its copies double like the shared pool's (gamedata.js poolCopies × coopPoolMultiplier: 16 / 10 —
-//     the maintainer's decision of 2026-10-15, GitHub #650, DESIGN §32.14.31). A piece all of whose bonds are switched
+//     avoid); this fork keeps private stock at 8 / 5 in co-op too. A piece all of whose bonds are switched
 //     off this match (本局禁用: the drawn bans and the mode's static list)
 //     gets no stock and so leaves the shop, like a preset chess whose bonds are all off (PRTS 卫戍协议：盟约 "禁用盟约有可能
 //     影响自选的支援干员"); 协防 (emptyShip) is never banned, so a prototype always stays. poolOf(baseId) routes every copy
@@ -218,10 +217,10 @@ export class PlayerDiy {
    * reward does not use this gate (`diyStockEntries`).
    * @returns {Array<[string, { cap: number, left: number, tier: number, shopLevel: number }]> | null}
    */
-  diyRollEntries() {
+  diyRollEntries({ ignoreStock = false } = {}) {
     if (!this.diyStock || !this.diyStock.entries.size) return null;
     const out = [];
-    for (const [id, e] of this.diyStock.entries) if (e.left > 0 && this.shop.level >= e.shopLevel) out.push([id, e]);
+    for (const [id, e] of this.diyStock.entries) if ((ignoreStock || e.left > 0) && this.shop.level >= e.shopLevel) out.push([id, e]);
     return out.length ? out : null;
   }
 
@@ -231,9 +230,9 @@ export class PlayerDiy {
    * apply), or null (none).
    * @returns {Array<[string, { cap: number, left: number, tier: number, shopLevel: number }]> | null}
    */
-  diyStockEntries() {
+  diyStockEntries({ ignoreStock = false } = {}) {
     if (!this.diyStock || !this.diyStock.entries.size) return null;
-    const out = [...this.diyStock.entries].filter(([, e]) => e.left > 0);
+    const out = [...this.diyStock.entries].filter(([, e]) => ignoreStock || e.left > 0);
     return out.length ? out : null;
   }
 

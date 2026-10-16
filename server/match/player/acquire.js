@@ -10,6 +10,16 @@ import { MAX_OFFER_SLOTS } from './common.js';
 import { onMerge } from '../botEmotes.js';
 
 export class PlayerAcquire {
+  /** Recruitment weights remain player-local and expire on the first successful Muelsyse acquisition. */
+  _rosmontisRecruitWeight(id, copies) {
+    if (this.counters['rosmontis:muelsyseAcquired'] || this.gd.chess(id)?.charId !== 'char_249_mlyss') return copies;
+    return this.allChess().some((piece) => this.gd.chess(piece.id)?.charId === 'char_391_rosmon') ? copies * 4 : copies;
+  }
+
+  _recordMuelsyseAcquisition(piece) {
+    if (this.gd.chess(piece.id)?.charId === 'char_249_mlyss') this.counters['rosmontis:muelsyseAcquired'] = 1;
+  }
+
   /** Normal copies of a base chess currently owned (board/hand/temp). */
   countCopies(baseId) {
     let n = 0;
@@ -30,20 +40,21 @@ export class PlayerAcquire {
   }
 
   /**
-   * Acquire a chess (buy, reward, effect grant). Takes pool copies (normal 1, elite goldenCopies) when available,
+   * Acquire a chess (buy, reward, effect grant). Only `fromPool` purchases take pool copies;
    * merges immediately when it completes a set, otherwise stows it (hand, overflow temp). Fires onGain (for the
    * elite when a merge happened, research 01 §7 "1+1+2"). Returns the owned piece (the elite after a merge) or null.
    * @param {string} chessId
    * @param {{ source?: string, toTemp?: boolean, fromPool?: boolean, silent?: boolean }} [opts]
    */
-  acquireChess(chessId, { source = 'grant', toTemp = false, fromPool = true, silent = false } = {}) {
+  acquireChess(chessId, { source = 'grant', toTemp = false, fromPool = false, silent = false } = {}) {
     const rec = this.gd.chess(chessId);
     // a DIY slot is only ever this player's own 自选 piece: a slot it has not filled has no body (甄选干员) to gain
     if (!rec || (rec.isDiy && !rec.diyFor)) return null;
     const base = this.gd.baseIdOf(chessId);
     const need = rec.isGolden ? this.gd.goldenCopies : 1;
     // the shared pool, or this player's stock of a slotted 自选 piece (player/diy.js poolOf)
-    const taken = fromPool ? this.poolOf(base).take(base, need, { overdraw: true }) : 0;
+    const pool = this.poolOf(base);
+    const taken = fromPool ? pool.take(base, need, { overdraw: true }) : 0;
     const piece = this.newPiece('chess', chessId, { poolCopies: taken });
     this.round.gainedChess++;
     let owned = piece;
@@ -51,8 +62,12 @@ export class PlayerAcquire {
       owned = this._mergeChess(base, piece);
       if (!owned) return null;
     } else {
-      this.stow(piece, { allowTemp: true, toTemp });
+      if (!this.stow(piece, { allowTemp: true, toTemp })) {
+        this.returnCopies(piece);
+        return null;
+      }
     }
+    this._recordMuelsyseAcquisition(owned);
     this.recompute();
     if (!silent) this.m.dispatch(this, 'onGain', { piece: owned, kind: 'chess', source });
     this.recompute();
@@ -96,7 +111,6 @@ export class PlayerAcquire {
     // a new piece: this round's per-piece counters start at 0, none is carried over from the copies — a newly merged
     // elite 拉普兰德 is a new 拉普兰德 and fires +8 on its own first manual refresh this round (GitHub #169; the owner's
     // decision of 2026-10-06; pieceRoundCount)
-    copies += this.poolOf(baseId).take(baseId, Math.max(0, this.gd.goldenCopies - copies), { overdraw: true });
     const elite = this.newPiece('chess', goldenId, { poolCopies: copies });
     // the copies are gone; a refresh dispatch that saw them still runs their 刷新时 特质 (effectsMeta.js _garrisons, #627)
     for (const l of consumed) if (l.area !== 'new') l.piece.mergedInto = elite.uid;
@@ -109,6 +123,7 @@ export class PlayerAcquire {
     this.checkItemMerges();
     // A deployed elite receives its summon stacks after the returned equipment.
     if (where === 'board') this.grantTokensFor(elite);
+    this._recordMuelsyseAcquisition(elite);
     this.stats.merges++;
     this.pushRewardOffer('merge');
     // (named as everyone sees the elite: a chess this player fields as its stand-in by the stand-in's name — 0.2.0 补位,
@@ -121,14 +136,11 @@ export class PlayerAcquire {
     return elite;
   }
 
-  /** Promote a normal chess piece to its elite in place (升华, 博士投影). Takes extra pool copies when available. */
+  /** Promote a normal chess piece to its elite in place (升华, 博士投影), preserving purchased-copy occupancy. */
   promote(piece) {
     if (!piece || piece.kind !== 'chess' || this.gd.isGolden(piece.id)) return false;
     const goldenId = this.gd.goldenIdOf(piece.id);
     if (!goldenId) return false;
-    const base = this.gd.baseIdOf(piece.id);
-    const extra = Math.max(0, this.gd.goldenCopies - (piece.poolCopies || 0));
-    piece.poolCopies = (piece.poolCopies || 0) + this.poolOf(base).take(base, extra, { overdraw: true });
     piece.id = goldenId;
     this.recompute();
     // an elite on the board tops its summon stacks up to the elite's deploy limit, like an elite merged onto a tile
@@ -170,14 +182,12 @@ export class PlayerAcquire {
     return np;
   }
 
-  /** Normal item → golden version in place (整备). A golden occupies two shared copies and this piece
-   * already occupies one, so the upgrade waits when no second copy is free. The caller keeps its charge. */
+  /** Normal item → golden version in place (整备). The effect preserves its purchased-copy occupancy. */
   upgradeItem(piece) {
     const rec = this.gd.item(piece.id);
     if (!rec || rec.isGolden) return false;
     const gid = rec.upgradeChessId || rec.goldenId;
     if (!gid || !this.gd.item(gid)) return false;
-    if (this.m.itemPool.left(piece.id) < 1) return false;
     piece.id = gid;
     this.recompute();
     return true;
@@ -185,9 +195,9 @@ export class PlayerAcquire {
 
   /**
    * Queue a reward offer: `count` DIFFERENT chess of tier min(level + offset, maxTier) at price 0 (pick 1). Each is a
-   * copy-weighted roll from the shared pool excluding the ones already drawn; a tier left without another chess tops
+   * capacity-weighted roll excluding the ones already drawn, independent of purchase stock; a tier without another chess tops
    * up from the tier below (user playtest #6 item 19: the official promotion reward never offers one operator twice —
-   * the user's first-hand report; the normal shop's slots may repeat). The offer reserves no copies (the pick takes one).
+   * the user's first-hand report; the normal shop's slots may repeat). Offers and free picks occupy no purchase copies.
    * The player's slotted 自选 pieces of the reward tier join the draw (player/diy.js diyStockEntries: copies left, then
    * the roll's tier — not the ordinary shop's shopLevel gate). 卫戍协议/帮助 干员晋升 names one temporary refresh one tier
    * above the 调度中心 and no separate pool; the owner decided on 2026-10-12 that the refresh includes 自选 of the newly
@@ -204,7 +214,10 @@ export class PlayerAcquire {
       const fresh = (id) => !list.includes(id);
       for (let i = 0; i < ro.count; i++) { // loop-cap: rewardOffer().count ≤ MAX_OFFER_SLOTS
         let id = null;
-        for (let tt = t; tt >= 1 && !id; tt--) id = this.m.pool.roll(this.m.rngShop, { tier: tt, filter: fresh, extra: this.diyStockEntries() });
+        for (let tt = t; tt >= 1 && !id; tt--) id = this.m.pool.roll(this.m.rngShop, {
+          tier: tt, filter: fresh, extra: this.diyStockEntries({ ignoreStock: true }), ignoreStock: true,
+          weight: source === 'merge' ? (candidate, copies) => this._rosmontisRecruitWeight(candidate, copies) : null,
+        });
         if (id) list.push(id);
       }
     }
@@ -220,7 +233,7 @@ export class PlayerAcquire {
    * 'item' under its `label` (the effect's name; player report #6 after 0.1.0).
    */
   pushItemOffer(ids, { source = 'effect', tier = null, label = null } = {}) {
-    const list = [...new Set(Array.isArray(ids) ? ids : [])].filter((id) => this.gd.item(id) && this.m.itemPool.canGain(id)).slice(0, MAX_OFFER_SLOTS);
+    const list = [...new Set(Array.isArray(ids) ? ids : [])].filter((id) => this.gd.item(id)).slice(0, MAX_OFFER_SLOTS);
     if (!list.length) return null;
     const offer = { tier: Number.isInteger(tier) ? tier : null, source, label: typeof label === 'string' && label ? label : null, slots: list.map((id) => ({ kind: 'item', id, price: 0, sold: false })) };
     this.offers.push(offer);
@@ -255,29 +268,25 @@ export class PlayerAcquire {
 
   /**
    * Acquire an item (buy, supply card, grant). Merges with an identical normal copy (hand/temp/equipped) into the
-   * golden item (to the hand). Returns the owned piece or null.
+   * golden item (to the hand). Only `fromPool` purchases occupy shared stock; grants occupy zero copies.
+   * Merges preserve the purchased copies of their inputs. Returns the owned piece or null.
    * `deferMerge` (effectsMeta, while onPrepEnd is on the stack): stow it — hand, else temp — and do not merge in this
    * call, even when an identical normal copy is already owned. The next prep's start runs checkItemMerges. Nothing
    * already equipped is taken off for the fight about to start. Overflow waits in the expandable temp queue.
    * [ASSUMED] every prep-end item grant, not only Victoria's hammer (owner's decision 2026-10-04).
-   * `displayed` (a shop slot or a reward offer already on screen, #624): skip the stock refusal and, once the piece
-   * is actually kept, record the copies that did not fit (`need` minus `left` before the gain). A failed stow or
-   * merge records nothing. Fixed gift families stay unlimited without a debt entry. Every other grant still refuses.
+   * `displayed` purchases may exceed stock (#624); their excess copies are repaid when purchased copies leave.
    */
-  acquireItem(itemId, { source = 'grant', toTemp = false, silent = false, deferMerge = false, requirePool = true, displayed = false } = {}) {
+  acquireItem(itemId, { source = 'grant', fromPool = false, toTemp = false, silent = false, deferMerge = false, displayed = false } = {}) {
     const rec = this.gd.item(itemId);
     if (!rec) return null;
-    // Only the fixed operator-gift families can overdraw. Several unrelated strategy grants also pass
-    // requirePool:false; they must retain their stock limit (for example commercial packaging).
-    const unlimitedGift = !requirePool && this.gd.isUnlimitedGiftItem(itemId);
     const pool = this.m.itemPool;
     const leftBefore = pool.left(itemId);
     const need = pool.need(itemId);
-    if (!unlimitedGift && !displayed && !pool.canGain(itemId)) {
+    if (fromPool && !displayed && !pool.canGain(itemId)) {
       this.m.toast(this, 'warn', '装备库存不足，未获得该装备');
       return null;
     }
-    let piece = this.newPiece('item', itemId);
+    let piece = this.newPiece('item', itemId, { poolCopies: fromPool ? this.m.itemPool.need(itemId) : 0 });
     // A prep-end grant may sit beside an identical copy until the next prep. The invariant counts only copies
     // without this mark, so the fight that is about to start is not reported as a missed merge.
     if (deferMerge) piece.deferMerge = true;
@@ -287,7 +296,7 @@ export class PlayerAcquire {
     } else {
       this.stow(piece, { allowTemp: true, toTemp });
     }
-    if (displayed && !unlimitedGift) {
+    if (fromPool && displayed) {
       const shortfall = leftBefore === Infinity ? 0 : Math.max(0, need - leftBefore);
       if (shortfall > 0) pool.owe(itemId, shortfall);
     }
@@ -304,7 +313,9 @@ export class PlayerAcquire {
     for (const l of locs) { if (consumed.length >= need) break; consumed.push(l); }
     if (consumed.length < need) return null;
     for (const l of consumed) if (l.area !== 'new') this._detach(l);
-    const golden = this.newPiece('item', rec.upgradeChessId || rec.goldenId);
+    const golden = this.newPiece('item', rec.upgradeChessId || rec.goldenId, {
+      poolCopies: consumed.reduce((n, l) => n + l.piece.poolCopies, 0),
+    });
     this.stow(golden, { allowTemp: true });
     this.stats.itemMerges++;
     this.m.dispatch(this, 'onMerge', { kind: 'item', piece: golden, itemId, consumed: consumed.map((l) => l.piece.uid) });

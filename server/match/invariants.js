@@ -45,6 +45,9 @@ export function collectViolations(m, { limit = 25 } = {}) {
     if (!Number.isInteger(p.uid) || p.uid <= 0) fail(`${ps.playerId}: bad uid ${p.uid}`);
     else if (uids.has(p.uid)) fail(`${ps.playerId}: duplicate uid ${p.uid}`);
     uids.add(p.uid);
+    if (p.kind === 'item' && (!Number.isInteger(p.poolCopies) || p.poolCopies < 0 || p.poolCopies > m.itemPool.need(p.id))) {
+      fail(`${ps.playerId}: item ${p.id} has invalid purchased copies ${p.poolCopies}`);
+    }
   };
 
   if (!PHASES.has(m.phase)) fail(`unknown phase ${m.phase}`);

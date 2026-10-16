@@ -19,7 +19,9 @@ export class PlayerItems {
    */
   releaseItemStock(piece) {
     if (!piece || piece.kind !== 'item' || !this.m?.itemPool) return 0;
-    return this.m.itemPool.repay(piece.id, this.m.itemPool.need(piece.id));
+    const copies = piece.poolCopies || 0;
+    piece.poolCopies = 0;
+    return this.m.itemPool.repay(piece.id, copies);
   }
 
   /**

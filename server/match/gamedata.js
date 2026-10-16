@@ -324,7 +324,7 @@ export class GameData {
     // Co-op doubles the single-player counts: the measured shared pool (shared by the whole team, independent of team
     // size) and each player's private 自选 stock alike — the maintainer's decision of 2026-10-15 (GitHub #650): with
     // the shared pool doubled and the 自选 stock not, a 自选 operator was diluted in the copy-weighted rolls.
-    const multiplier = this.isSolo ? 1 : posIntOr(this.economy.coopPoolMultiplier, 1);
+    const multiplier = this.isSolo || this.chess(baseId)?.isDiy ? 1 : posIntOr(this.economy.coopPoolMultiplier, 1);
     return base * multiplier;
   }
 

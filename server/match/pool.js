@@ -5,14 +5,14 @@
 //   * Every visible (non-hidden, non-DIY) base chess that is not banned this match has `cap` copies
 //     (config.economy.poolCopies[tier], measured identity overrides; co-op shared stock doubled). `left` is the
 //     signed capacity minus occupation; the public left() and shop sampling clamp a deficit to zero.
-//   * Owning a piece takes copies: a normal piece holds 1, an elite holds 3 (merge of 3 normals). Shop displays
+//   * Purchased pieces take copies: a normal holds 1, an elite purchase holds 3. Grants hold zero. Shop displays
 //     do NOT reserve copies. An operator or equipment card already shown in the shop, or a reward already shown, can
 //     still be taken and overdraws (chess: a negative raw left; equipment: SharedItemPool's debt — GitHub #498, and
 //     the maintainer's decision of 2026-10-14 for equipment, #624). A slot that is already sold still fails SOLD_OUT.
-//     Future rolls exclude empty stock. 整备 and grants that are not an already-shown card stay stock-limited.
+//     Future shop rolls exclude empty stock; free grants and upgrades preserve purchased-copy occupation.
 //   * Pieces remember how many copies they hold (`piece.poolCopies`), so selling / elimination / temp wipes return
-//     exactly what was taken — chess granted by effects while the pool is empty (or hidden/banned chess) hold 0.
-//   * Invariant: raw left ≤ cap and raw left + Σ held copies == cap. Mimic can exceed stock, but its copies still occupy it.
+//     exactly what was taken. Effect-granted chess never occupy purchase stock.
+//   * Invariant: raw left ≤ cap and raw left + Σ held copies == cap.
 //
 // Rolls: each chess slot draws ONE copy uniformly from all remaining copies of eligible chess with tier ≤ shop level
 // ("copy-weighted"; duplicates within a roll allowed). The item slot picks a tier with the same tier shares, then a
@@ -101,14 +101,16 @@ export class SharedPool {
    * Remaining copies of eligible chess (tier ≤ maxTier, or exactly `tier`): the pool's entries, then `extra` ([id, entry]
    * pairs of the same shape — a player's 自选 stock) under the same filters.
    */
-  _eligible({ maxTier = 6, tier = null, filter = null, extra = null, ignoreCounts = false } = {}) {
+  _eligible({ maxTier = 6, tier = null, filter = null, extra = null, ignoreCounts = false, ignoreStock = false, weight = null } = {}) {
     const out = [];
     const scan = (list) => {
       for (const [id, e] of list) {
-        if (!ignoreCounts && e.left <= 0) continue;
+        if (!ignoreCounts && !ignoreStock && e.left <= 0) continue;
         if (tier != null ? e.tier !== tier : e.tier > maxTier) continue;
         if (filter && !filter(id, e)) continue;
-        out.push([id, ignoreCounts ? 1 : e.left]);
+        const copies = ignoreCounts ? 1 : ignoreStock ? e.cap : e.left;
+        const n = weight ? weight(id, copies) : copies;
+        if (Number.isFinite(n) && n > 0) out.push([id, n]);
       }
     };
     scan(this.entries);
@@ -120,7 +122,8 @@ export class SharedPool {
    * Copy-weighted roll: one copy uniformly among remaining copies of eligible chess. Returns a base id or null.
    * @param {Function} rng
    * @param {{ maxTier?: number, tier?: number|null, filter?: (id: string, e: object) => boolean,
-   *   extra?: Iterable<[string, { left: number, tier: number }]>|null }} [opts]
+   *   extra?: Iterable<[string, { left: number, tier: number }]>|null,
+   *   weight?: (id: string, copies: number) => number }} [opts]
    */
   roll(rng, opts = {}) {
     const el = this._eligible(opts);
@@ -186,12 +189,11 @@ export class SharedPool {
   }
 }
 
-/** Shared equipment stock, derived from actual ownership. Merges, equips and returns cannot lose a reservation:
- * normal equipment occupies one, upgraded equipment two. Shop and reward displays reserve nothing. An already
- * displayed shop card or item reward may be taken after `left` hits 0; `owe` records those copies and `repay`
+/** Shared equipment purchase stock. Merges, equips and returns preserve purchased-copy occupation; grants occupy zero.
+ * Shop displays reserve nothing. An already displayed shop card may be taken after `left` hits 0; `owe` records its copies and `repay`
  * clears them first when a copy actually leaves the match (destroy, consume, elimination, a temp wipe). Rolls and
  * `canGain` keep using the clamped `left`, so an empty item does not appear again until the debt is repaid and a
- * copy is free. 整备 and ordinary grants stay limited. Fixed gift families may exceed the cap without a debt entry.
+ * copy is free. Free grants and upgrades take no additional copies.
  * Source: the original experiment BV1eLXXBqEgF, 1:30 and 2:30, extended to equipment by the maintainer on
  * 2026-10-14 (#624). [ASSUMED] An item that is consumed, destroyed or removed by elimination no longer occupies
  * stock, consistently with the video's ownership model; this is not a per-match purchase limit. */
@@ -209,8 +211,8 @@ export class SharedItemPool {
     let count = 0;
     const see = p => {
       if (!p) return;
-      if (p.kind === 'item' && this.gd.baseIdOf(p.id) === base) count += this.need(p.id);
-      for (const item of p.items || []) if (this.gd.baseIdOf(item.id) === base) count += this.need(item.id);
+      if (p.kind === 'item' && this.gd.baseIdOf(p.id) === base) count += p.poolCopies;
+      for (const item of p.items || []) if (this.gd.baseIdOf(item.id) === base) count += item.poolCopies;
     };
     for (const ps of this.players()) {
       for (const p of ps.hand) see(p);
