@@ -7,7 +7,7 @@
 // the end in Node and in headless Chrome through the client's own loader (public/js/battle/runner.js loadBrowserSim)
 // with the field's LocalBossPool, and must give the same result digest, the same pool and the same fx per kind.
 // The fields exercise the playtest-6b sim paths: 直接乘算 bonus sums (§20.10), one 奥术 instance per target
-// (applyStrongest), the drone 2 % links and the 剑 / 锤 / shell kit (§20.13), and 限伤 cancels (fx 'hitCap', §20.12).
+// (applyStrongest), the drone 2 % links and the 剑 / 锤 / shell kit (§20.13), and the 300000 damage cap (fx 'hitCap').
 // 瘫痪 (fx 'palsy': a 麻痹 stack interrupts an enemy attack) is checked on the same four specs with a golden 催泪瓦斯 in
 // every operator's second slot (withTearGas), compared Chrome vs Node like the others: the bots' only 麻痹 had been one
 // 5 % 催泪瓦斯 on one operator — a single hit at 0.1.4, none since 0.2.0's enemy damage frame (WE1) re-timed every fight.
@@ -15,13 +15,13 @@
 // fixed board of 999-layer heavy hitters
 // (withHeavyHitters): the bots' own hits of ≥ 300000 came from whatever 维多利亚 / 精准 / 奥术 mix they drafted — none
 // since 0.2.0's CB3 (the 受到攻击时 counters answer every damage instance) re-drafted seed 22, whose best hit is now
-// about half the limit; the cancel path itself is unchanged (the earlier captures still cancel the same hits).
+// about half the limit; oversized hits continue through damaged hooks and pool credit at 300000 damage.
 // 无来源 HP (drone 死亡集群 links and 剑 / 锤 transfers) likewise, on a fourth copy (withTransferWindow). Shared co-op
 // stock (DESIGN §29.8) re-drafted seed 22: the 999-layer boards now clear in tens of seconds, before a drone is killed
 // on every field and before a blade takes a transferable hit (a forced replace is not damage). The transfer path is
 // unchanged — the 0.2.3 specs of this seed still lose leader HP on every field under this sim. The copy keeps the
-// drafted operators and holds 维多利亚 / 精准 / 奥术 / 卡西米尔 / 绝技 at 1 layer so the fight lasts long enough (0.3.0's bots
-// re-drafted seed 22 again: one of those fields now runs to the time limit, which that copy is allowed to).
+// drafted operators and holds 维多利亚 / 精准 / 奥术 / 卡西米尔 / 绝技 at 1 layer so the fight lasts long enough.
+// Those copies may remain unfinished at their 1200-game-second observation budget.
 //
 // Opt-in (starts Chrome): SIM_E2E=1 node --test test/sim/bossfield.browser.test.js   (or RENDER_E2E=1)
 // Run browser test files one at a time. Chrome path: $CHROME_PATH or the macOS default.
@@ -31,22 +31,23 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PHASE, BOND_LAYER_CAP } from '../../shared/constants.js';
+import { PHASE, BOND_LAYER_CAP, BOSS_HIT_LIMIT } from '../../shared/constants.js';
 import { createBattleFromSpec, resultDigest } from '../../server/sim/spec.js';
 import { DataSource } from '../../server/sim/simdata.js';
 import { GameData } from '../../server/match/gamedata.js';
 import { computeBonds, bondSnapshot } from '../../server/match/bondsMeta.js';
 import { tileKey } from '../../server/match/board.js';
 import { makeMatch, DATA } from '../match/harness.js';
+import { UI_CHROME as CHROME, UI_BROWSER_ARGS } from '../e2e/ui-browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const enabled = (process.env.RENDER_E2E === '1' || process.env.SIM_E2E === '1') && existsSync(CHROME);
 const skip = enabled ? false : 'set SIM_E2E=1 or RENDER_E2E=1 (needs Chrome)';
-// game seconds (Battle.runToEnd), a safety net only: every field must clear before it. The bots' boards follow the rules
-// of the whole match (seed 22): since 0.2.0's last fixes (GitHub #232 re-drafted the earlier rounds) the Hidden Core b1
-// board clears at about 511 s, its 催泪瓦斯 copy (the second item replaced) at about 619 s — twice that leaves room
-const MAX_SECONDS = 1200;
+// Game seconds (Battle.runToEnd): the ordinary, tear-gas and heavy-hitter fields must clear within this budget.
+// The current Hidden Core b2 still has 859997 of 28.8 M pool HP at 1200 s, with all 16 operators alive and attacking;
+// its declining pool needs more observation time. Transfer-window copies keep their shorter budget for HP-loss checks.
+const MAX_SECONDS = 2400;
+const TRANSFER_SECONDS = 1200;
 
 /** The boss / hidden specs of a 4-bot co-op match (终极, seed 22, boss_1 then boss_8), every active bond at 999. */
 function captureBossSpecs() {
@@ -145,24 +146,59 @@ function withTransferWindow(spec) {
  * its digest, the local pool, the fx count per kind and the leader-side checks (奥术 instances, 无来源 HP losses).
  * Serialised into the page with Function#toString, so it uses nothing from this module's scope.
  */
-function runField(S, ds, spec, maxSeconds) {
+function runField(S, ds, spec, maxSeconds, hitLimit) {
   const b = S.createBattleFromSpec(spec, ds, { quiet: true, recordEvents: false });
   const fx = {};
   const fx0 = b.fx.bind(b);
   b.fx = (k, p) => { fx[k] = (fx[k] || 0) + 1; return fx0(k, p); };
   let hpLoss = 0;
-  b.on('damaged', (c) => { if (c.target && c.target.isBoss && c.dmg && c.dmg.tags && c.dmg.tags.includes('hpLoss')) hpLoss++; }, { priority: -1e9 });
+  let maxLeaderHit = 0;
+  const cappedHits = [], cappedPoolHits = [], poolCredits = {};
+  b.on('damaged', (c) => {
+    if (!c.target?.isBoss || c.type === 'element') return;
+    if (c.dmg?.tags?.includes('hpLoss')) { hpLoss++; return; }
+    maxLeaderHit = Math.max(maxLeaderHit, c.amount);
+    if (c.amount === hitLimit) cappedHits.push([c.target.defId, c.credit?.ownerId ?? null, c.source?.ownerId ?? null, !!c.dmg?.sourceless]);
+  }, { priority: -1e9 });
+  if (b.sharedBoss) {
+    const pool = b.sharedBoss, damage = pool.damage.bind(pool);
+    pool.damage = (pid, amount) => {
+      const dealt = damage(pid, amount);
+      if (pid != null && dealt > 0) poolCredits[pid] = (poolCredits[pid] || 0) + dealt;
+      if (amount === hitLimit && dealt > 0) cappedPoolHits.push([pid, dealt]);
+      return dealt;
+    };
+  }
   let maxArcane = 0;
+  let nextProgress = 60;
+  const progress = [];
   b.on('tick', () => {
     for (const e of b.enemies) {
       if (!e.alive || !e.isBoss) continue;
       const n = e.buffs.filter((x) => String(x.key).startsWith('bond:arcaneShip')).length;
       if (n > maxArcane) maxArcane = n;
     }
+    if (b.time >= nextProgress) {
+      progress.push({ time: b.time, poolHp: b.sharedBoss?.hp ?? null,
+        aliveOps: b.allyUnits.filter(u => u.kind === 'op' && u.alive && u.deployed).length,
+        enemies: b.enemies.filter(e => e.alive).length });
+      if (progress.length > 6) progress.shift();
+      nextProgress += 60;
+    }
   });
   const r = b.runToEnd(maxSeconds);
   const d = S.resultDigest(r);
-  return { hash: d.hash, json: d.json, reason: r ? r.reason : null, poolHp: b.sharedBoss ? b.sharedBoss.hp : null, fx, hpLoss, maxArcane };
+  const poolRecorded = { ...(b.sharedBoss?.byPlayer || {}) };
+  const battleCredits = Object.fromEntries(b.players.map(p => [p.playerId, b._pp(p.playerId).bossDamage]));
+  const diagnostics = {
+    time: b.time,
+    poolHp: b.sharedBoss?.hp ?? null, poolMax: b.sharedBoss?.maxHp ?? null, progress,
+    aliveOps: b.allyUnits.filter(u => u.kind === 'op' && u.alive && u.deployed).length,
+    aliveEnemies: b.enemies.filter(e => e.alive).length,
+    errors: (b.errors || []).map(e => ({ label: e.label, message: e.message })),
+  };
+  return { hash: d.hash, json: d.json, reason: r ? r.reason : null, poolHp: b.sharedBoss ? b.sharedBoss.hp : null,
+    fx, hpLoss, maxArcane, maxLeaderHit, cappedHits, cappedPoolHits, poolCredits, poolRecorded, battleCredits, diagnostics };
 }
 
 describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () => {
@@ -171,7 +207,7 @@ describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () =
     const puppeteer = (await import('puppeteer-core')).default;
     const { startServer } = await import('../../server/index.js');
     srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run'] });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-first-run', ...UI_BROWSER_ARGS] });
   });
   after(async () => {
     await browser?.close();
@@ -184,8 +220,9 @@ describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () =
     // the four as captured, the same four with a 麻痹 source on every field (withTearGas), with 限伤-sized hits
     // on every field (withHeavyHitters), and with the damage bonds held at 1 layer (withTransferWindow)
     const runs = [...specs, ...specs.map(withTearGas), ...specs.map(withHeavyHitters), ...specs.map(withTransferWindow)];
+    const budgets = runs.map((_, i) => i < 3 * specs.length ? MAX_SECONDS : TRANSFER_SECONDS);
     const ds = new DataSource(DATA, null);
-    const node = runs.map((spec) => runField({ createBattleFromSpec, resultDigest }, ds, spec, MAX_SECONDS));
+    const node = runs.map((spec, i) => runField({ createBattleFromSpec, resultDigest }, ds, spec, budgets[i], BOSS_HIT_LIMIT));
 
     const page = await browser.newPage();
     const problems = [];
@@ -196,34 +233,47 @@ describe('Final Assault / Hidden Core fields in the browser sim', { skip }, () =
     // the test rebuilds runField from its source inside the page (new Function); the site's CSP (0.3.0) allows no eval
     await page.setBypassCSP(true);
     await page.goto(`http://127.0.0.1:${srv.port}/sim/spec.js`);
-    const chrome = await page.evaluate(async (all, src, maxSeconds) => {
+    const chrome = await page.evaluate(async (all, src, budgets, hitLimit) => {
       const { loadBrowserSim } = await import('/js/battle/runner.js');
       const { spec: S, ds } = await loadBrowserSim();
       const run = new Function(`return (${src})`)();
-      return all.map((spec) => run(S, ds, spec, maxSeconds));
-    }, runs, runField.toString(), MAX_SECONDS);
+      return all.map((spec, i) => run(S, ds, spec, budgets[i], hitLimit));
+    }, runs, runField.toString(), budgets, BOSS_HIT_LIMIT);
     await page.close();
     assert.deepEqual(problems, []);
 
     const copies = ['', ' +催泪瓦斯', ' +heavy hitters', ' +transfer window'];
     runs.forEach((spec, i) => {
       const at = `${spec.kind} ${spec.fieldId} ${spec.bossId}${copies[Math.floor(i / specs.length)]}`;
-      // the copy with the damage bonds held at 1 layer exists to cost the leader 无来源 HP; it may run to the time limit on a
-      // field (0.3.0's bots: Hidden Core b1 keeps ~5.4 M pool HP after 1200 s) — Chrome and Node must still agree
-      if (i < 3 * specs.length) assert.equal(node[i].reason, 'cleared', `${at}: the 999-layer pair clears the field`);
+      // Transfer-window copies observe 无来源 HP loss for 1200 s and may remain unfinished; all other copies must clear.
+      if (i < 3 * specs.length) assert.equal(node[i].reason, 'cleared', `${at}: the 999-layer pair clears the field; Chrome reason ${chrome[i].reason}; ${JSON.stringify(node[i].diagnostics)}`);
       assert.equal(chrome[i].json, node[i].json, `${at}: browser and Node results are identical`);
       assert.equal(chrome[i].hash, node[i].hash, at);
       assert.equal(chrome[i].poolHp, node[i].poolHp, `${at}: same local pool`);
       assert.deepEqual(chrome[i].fx, node[i].fx, `${at}: same fx per kind`);
       assert.equal(chrome[i].hpLoss, node[i].hpLoss, `${at}: same 无来源 HP losses on the leader`);
       assert.ok(node[i].maxArcane <= 1, `${at}: one 奥术 instance on the leader at a time (${node[i].maxArcane})`);
+      for (const key of ['maxLeaderHit', 'cappedHits', 'cappedPoolHits', 'poolCredits', 'poolRecorded', 'battleCredits']) {
+        assert.deepEqual(chrome[i][key], node[i][key], `${at}: same ${key}`);
+      }
+      assert.ok(node[i].maxLeaderHit <= BOSS_HIT_LIMIT, `${at}: ordinary leader HP damage never exceeds 300000`);
+      assert.deepEqual(node[i].poolRecorded, node[i].poolCredits, `${at}: actual HP loss retains shared-pool ownership`);
+      for (const [pid, amount] of Object.entries(node[i].poolCredits)) {
+        assert.ok(Math.abs(node[i].battleCredits[pid] - amount) < 1e-6, `${at}: ${pid} retains boss damage in settlement`);
+      }
+      for (const [, credit, source, sourceless] of node[i].cappedHits) {
+        assert.equal(source, sourceless ? null : credit, `${at}: capped hits preserve source and credit semantics`);
+        if (credit != null) assert.ok(spec.players.some(p => p.playerId === credit), `${at}: credit belongs to this field's player`);
+      }
     });
     const real = node.slice(0, specs.length);
     const gassed = node.slice(specs.length, 2 * specs.length);
     const heavy = node.slice(2 * specs.length, 3 * specs.length);
     const opened = node.slice(3 * specs.length);
     const sum = (rows, k) => rows.reduce((a, r) => a + (r.fx[k] || 0), 0);
-    assert.ok(sum(heavy, 'hitCap') >= 1, `a 999-layer hit reached 300000 and was cancelled (限伤: ${heavy.map((r) => r.fx.hitCap || 0)} with the heavy hitters, ${sum(real, 'hitCap')} on the bots' own boards)`);
+    assert.ok(sum(heavy, 'hitCap') >= 1, `a 999-layer hit exceeded 300000 and was capped (限伤: ${heavy.map((r) => r.fx.hitCap || 0)} with the heavy hitters, ${sum(real, 'hitCap')} on the bots' own boards)`);
+    assert.ok(heavy.some(r => r.cappedHits.some(([, credit]) => credit != null)), 'capped 300000 damage still fires damaged hooks with attacker credit');
+    assert.ok(heavy.some(r => r.cappedPoolHits.some(([pid, dealt]) => pid != null && dealt > 0)), 'capped hits actually remove shared-pool HP for their attacker');
     assert.ok(sum(gassed, 'palsy') >= 1, `瘫痪 occurred with the 催泪瓦斯 (${gassed.map((r) => r.fx.palsy || 0)})`);
     assert.ok(opened.every((r) => r.hpLoss >= 1), `holding the damage bonds at 1 layer, every field cost the leader 无来源 HP (drone links / 剑 · 锤 transfers: ${opened.map((r) => r.hpLoss)}; the 999-layer boards: ${real.map((r) => r.hpLoss)})`);
     // 奥术 on the bots' own boards or on the heavy-hitter copy (洛洛 + 深靛 = 奥术 2): seed 22's bots stopped drafting it
