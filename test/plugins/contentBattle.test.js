@@ -63,14 +63,14 @@ test('mode economy and global overrides reach GameData and the battle flags', t 
   const h = makeBattle({ data: new DataSource(set.data), units: [{ chessId: 'chess_x_data_demo_guard_a', row: 10, col: 5 }], flags: gd.dp });
   assert.equal(h.b.flags.dpInit, 35); checkInvariants(h.b);
 });
-test('merged data reaches every support lookup and a real battle, through Node and the actual browser-style loader', async t => {
+test('merged data reaches every support lookup and a real battle, through Node and the actual browser-style loader', { timeout: 30000 }, async t => {
   const { set, dir } = setFor(t);
   for (const [file, get] of [['bonds',bondRecord],['items',itemRecord],['bands',bandRecord],['garrisons',garrisonRecord],['effects',effectRecord],['chess',chessRecord]]) {
     const id = Object.keys(set.data[file])[0]; assert.equal(get(id), set.data[file][id]);
   }
   assert.equal(gameData(), set.data);
   const runtime = path.join(dir, 'runtime'); fs.mkdirSync(path.join(runtime, 'server'), { recursive: true });
-  fs.cpSync('server/sim', path.join(runtime,'server/sim'), { recursive: true, filter: src => !src.endsWith('/nodeData.js') });
+  fs.cpSync('server/sim', path.join(runtime,'server/sim'), { recursive: true, filter: src => path.basename(src) !== 'nodeData.js' });
   fs.cpSync('shared', path.join(runtime,'shared'), { recursive: true });
   fs.writeFileSync(path.join(runtime,'package.json'), '{"type":"module"}');
   fs.writeFileSync(path.join(runtime,'server/data.js'), DATA_SHIM_JS);

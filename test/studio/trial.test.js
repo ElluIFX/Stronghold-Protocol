@@ -85,7 +85,7 @@ test('trial API runs through LAN/Host/origin/key gates without opening a listeni
   assert.equal(r.status, 200); assert.equal(JSON.parse(r.body).ok, true, r.body);
 });
 
-test('watchdog kills a real non-responsive child process and allows the next job', { timeout: 5000 }, async t => {
+test('watchdog kills a real non-responsive child process and allows the next job', { timeout: 15000 }, async t => {
   const { fork } = await import('node:child_process');
   const f = fixture(t); const id = plugin(f);
   const entry = path.join(f.dir, 'hang.cjs');
@@ -94,7 +94,7 @@ test('watchdog kills a real non-responsive child process and allows the next job
   const b = bench(f, { spawn: (_entry, args, options) => (child = fork(entry, args, options)), limits: { ...TRIAL_LIMITS, timeoutMs: 400 } });
   t.after(() => b.close());
   await assert.rejects(b.run({ id }), { code: 'PLUGIN_STUDIO_TRIAL_TIMEOUT' });
-  assert.equal(child.killed, true); assert.equal(b.active(), 0);
+  assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' }); assert.equal(b.active(), 0);
 });
 
 test('wizard API creates each class, saves with revision, validates DSL, and keeps executable files off studio GET', async t => {

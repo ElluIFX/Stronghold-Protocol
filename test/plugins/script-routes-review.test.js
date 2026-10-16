@@ -42,7 +42,7 @@ test('parent rejects forged IPC routes and raw traversal requests reach the orig
   }
   const served = [];
   const handler = createRequestHandler({trustedRuntime:runtime,log:quiet,
-    health:{startedAt:Date.now(),network:{connectionCount:0},registry:{size:0},lobby:{stats:() => ({rooms:0,matches:0})}},
+    health:{startedAt:Date.now(),network:{connectionCount:0},registry:{size:0},lobby:{stats:() => ({rooms:0,matches:0}),presence:() => ({online:0,inRoom:0})}},
     serveStatic:async (req,res,rawPath) => {served.push(rawPath);res.writeHead(404);res.end('original static');},
   });
   for (const url of bypasses) {

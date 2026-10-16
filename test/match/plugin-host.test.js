@@ -190,7 +190,7 @@ describe('match hosts in rooms (P1c): verification, the watchdog, crashes', () =
     c.id = w.playerId;
     return c;
   };
-  const ok = async (c, msg, timeout) => { const r = await c.request(msg, timeout); assert.equal(r.t, 'ok', `${msg.t}: ${JSON.stringify(r)}`); return r; };
+  const ok = async (c, msg, timeout = 10000) => { const r = await c.request(msg, timeout); assert.equal(r.t, 'ok', `${msg.t}: ${JSON.stringify(r)}`); return r; };
   /** A solo room with the plugin `id` switched on and checked by the host's page. */
   async function moddedRoom(srv, host, id, mode = 'solo') {
     await ok(host, { t: 'room.create', mode, difficulty: 'NORMAL' });

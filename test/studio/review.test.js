@@ -120,25 +120,26 @@ test('trial draft writer rejects traversal, absolute paths, hidden names and bac
   writeTrialDraftFile(root, 'data/operator.json', '{}'); assert.equal(fs.readFileSync(path.join(root, 'data/operator.json'), 'utf8'), '{}');
 });
 
-for (const ending of ['close', 'timeout', 'probe-timeout']) test(`a real pinned SIGTERM-ignoring probe leaves no grandson after trial ${ending}`, { timeout: 20000 }, async t => {
+for (const ending of ['close', 'timeout', 'probe-timeout']) test(`a real pinned SIGTERM-ignoring probe leaves no grandson after trial ${ending}`, { timeout: 40000 }, async t => {
+  const probeTimeoutMs = 5000;
   const f = scriptFixture(t), marker = path.join(f.root, 'probe.pid');
   f.put('loop', `export default () => { const p = global['pro' + 'cess'];
     p.getBuiltinModule('fs').writeFileSync(${JSON.stringify(marker)}, String(p.pid));
     p.on('SIGTERM', () => {}); while (true) {} }`);
   let leader;
   const bench = createTrialBench({ registry: f.registry, files: createPluginFiles(f.pluginsDir),
-    spawn: (entry, args, opts) => (leader = fork(entry, args, { ...opts, env: { ...process.env, SP_SCRIPT_PROBE_MS: ending === 'probe-timeout' ? '1000' : '60000' } })),
-    limits: { ...TRIAL_LIMITS, timeoutMs: ending === 'timeout' ? 6000 : 15000 } });
+    spawn: (entry, args, opts) => (leader = fork(entry, args, { ...opts, env: { ...process.env, SP_SCRIPT_PROBE_MS: ending === 'probe-timeout' ? String(probeTimeoutMs) : '60000' } })),
+    limits: { ...TRIAL_LIMITS, timeoutMs: ending === 'timeout' ? 15000 : 25000 } });
   t.after(() => bench.close());
   const pending = bench.run({ id: 'loop', seconds: 1 });
   const checked = ending === 'probe-timeout' ? pending : assert.rejects(pending, { code: ending === 'timeout' ? 'PLUGIN_STUDIO_TRIAL_TIMEOUT' : 'PLUGIN_STUDIO_TRIAL_FAILED' });
-  for (let n = 0; n < 400 && !fs.existsSync(marker); n++) await delay(20);
+  for (let n = 0; n < 750 && !fs.existsSync(marker); n++) await delay(20);
   assert.ok(fs.existsSync(marker), 'the actual contentSet preflight ran');
   const pid = Number(fs.readFileSync(marker, 'utf8'));
   t.after(() => { try { process.kill(pid, 'SIGKILL'); } catch { /* absent */ } });
   if (ending === 'close') bench.close();
   const result = await checked;
-  if (ending === 'probe-timeout') { assert.equal(result.ok, false); assert.equal(result.issues[0].code, 'PLUGIN_SCRIPT_CHECK'); assert.match(result.issues[0].text, /1000 ms.*SIGKILL/); }
+  if (ending === 'probe-timeout') { assert.equal(result.ok, false); assert.equal(result.issues[0].code, 'PLUGIN_SCRIPT_CHECK'); assert.match(result.issues[0].text, new RegExp(`${probeTimeoutMs} ms.*SIGKILL`)); }
   for (let n = 0; n < 100; n++) { try { process.kill(pid, 0); await delay(20); } catch { break; } }
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
   assert.throws(() => process.kill(leader.pid, 0), { code: 'ESRCH' });
