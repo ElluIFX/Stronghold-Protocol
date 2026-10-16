@@ -25,10 +25,10 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { UI_CHROME as CHROME, UI_BROWSER_ARGS } from '../e2e/ui-browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
-const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const ENABLED = process.env.SP_E2E === '1' && existsSync(CHROME);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,7 +45,7 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
     const puppeteer = (await import('puppeteer-core')).default;
     srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
     base = `http://127.0.0.1:${srv.port}`;
-    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
+    browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: [...UI_BROWSER_ARGS] });
     mkdirSync(OUT, { recursive: true });
   });
 
@@ -160,12 +160,12 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
 
   for (const vp of Object.keys(VIEWPORTS)) {
     test(`${vp}: 8 players — every in-match screen fits; compact team panel above the corner; dense draft order`, { timeout: 5 * 60 * 1000 }, async () => {
-      for (const [name, q] of [['prep', 'phase=PREP'], ['combat', 'phase=COMBAT&variant=done'], ['unite', 'phase=UNITE&variant=leaker'],
+      for (const [name, q] of [['prep', 'phase=PREP'], ['combat', 'phase=COMBAT&variant=done'], ['unite', 'phase=UNITE&variant=leaker'], ['unite2', 'phase=UNITE&variant=leaker&uniteStage=2'],
         ['final', 'phase=FINAL_ASSAULT'], ['draft', 'phase=BAND_DRAFT'], ['briefing', 'phase=INFO_CHECK'], ['result', 'phase=RESULT']]) {
         const { page, problems } = await open(vp, `players=8&${q}`);
         await page.screenshot({ path: path.join(OUT, `p8-${vp}-${name}.png`) });
         assert.deepEqual(await layoutProblems(page), [], `${vp} ${name}`);
-        if (['prep', 'combat', 'unite', 'final'].includes(name)) {
+        if (['prep', 'combat', 'unite', 'unite2', 'final'].includes(name)) {
           const t = await teamFacts(page);
           assert.equal(t.compact, true, `${vp} ${name}: compact rows`);
           assert.equal(t.rows, 8);

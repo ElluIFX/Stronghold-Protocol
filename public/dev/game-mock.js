@@ -4,8 +4,9 @@
 // exercised. Combat phases stream b.snap / b.ev at 20 Hz through net._emit like the real socket.
 // `?players=5…8` (or the switcher's 4P / 5P / 8P): a larger room (5–8 seats, a remake extension) — P5–P8 join the
 // four default players, the draft / 机变 orders list everyone, a 机变 draft has max(6, players + 2) cards (8 → 10),
-// boss fields pair the players by seat (b1..b4; an odd last player alone), and a 联防 with more than 4 players has
-// one unite field per 4 (u, u2). Without it (or players=4) the mock is exactly the 4-player one.
+// boss fields pair the players by seat (b1..b4; an odd last player alone), and joint defense runs its helper groups
+// sequentially (u, then u2). `?uniteStage=2` starts at the second stage; __MOCK__.advanceUniteStage() carries survivors
+// into the next field and resets its deadline. Without players= the room has four players.
 
 import '/js/ui/compat.js';
 import { render } from '/vendor/preact.module.js';
@@ -396,7 +397,7 @@ function buildResult(victory) {
 // ---- combat simulation ------------------------------------------------------------------------------------------------
 function stopBattle() { if (S?.battle?.timer) clearInterval(S.battle.timer); if (S) S.battle = null; }
 
-function startCombat(phase) {
+function startCombat(phase, { uniteStage = Number(params.get('uniteStage')) || 1, carry = null } = {}) {
   const pub = S.pub;
   const boss = phase === PHASE.FINAL_ASSAULT || phase === PHASE.HIDDEN_CORE;
   pub.round = boss ? (phase === PHASE.HIDDEN_CORE ? 15 : 14) : 6;
@@ -418,22 +419,26 @@ function startCombat(phase) {
   // enemies still standing (uncapped: the ×N tag) falls with every kill below.
   const leakMock = phase === PHASE.UNITE && VARIANTS.has('leaker');
   const leftOf = (pid, n) => { const p = pub.players.find((x) => x.playerId === pid); if (p) { p.uniteLeft = n; p.pendingLp = Math.min(10, n) || undefined; } };
-  // more than 4 players (a remake extension): one unite field per 2 helpers, at most ceil(players / 4) fields ('u',
-  // 'u2'), each with its share of the leakers (m.public unite.fields — only with more than one field)
+  // Every leaked enemy enters the first helper group; each later group receives the remaining enemies.
   let uniteFields = null;
   if (phase === PHASE.UNITE && pub.players.length > 4) {
     const ids = pub.players.map((p) => p.playerId);
     const helpers = [...(leakMock ? ['ai_2', 'p3'] : ['p1', 'ai_2']), ...ids.slice(4, 6)];
     const leakers = ids.filter((id) => !helpers.includes(id));
     const nf = Math.min(Math.ceil(ids.length / 4), Math.ceil(helpers.length / 2));
-    uniteFields = Array.from({ length: nf }, (_, k) => ({ fieldId: k ? `u${k + 1}` : 'u', helpers: helpers.slice(2 * k, 2 * k + 2), leakers: [] }));
-    leakers.forEach((id, i) => uniteFields[i % nf].leakers.push(id));
+    uniteFields = Array.from({ length: nf }, (_, k) => ({ fieldId: k ? `u${k + 1}` : 'u', helpers: helpers.slice(2 * k, 2 * k + 2), leakers: [...leakers] }));
     pub.unite = { helpers, leakers, ...(nf > 1 ? { fields: uniteFields } : {}) };
-    for (const p of pub.players) p.status = helpers.includes(p.playerId) ? 'helping' : 'done';
-    leakers.forEach((id, i) => leftOf(id, [13, 12, 3, 7, 5, 2][i % 6]));
+    leakers.forEach((id, i) => leftOf(id, carry?.[id] ?? [13, 12, 3, 7, 5, 2][i % 6]));
   } else if (phase === PHASE.UNITE) {
     pub.unite = leakMock ? { helpers: ['ai_2', 'p3'], leakers: ['p1', 'p4'] } : { helpers: ['p1', 'ai_2'], leakers: ['p3'] };
     if (leakMock) { leftOf('p1', 13); leftOf('p4', 3); pub.players[0].status = 'done'; pub.players[2].status = 'helping'; } else leftOf('p3', 12);
+  }
+  if (phase === PHASE.UNITE) {
+    const groups = uniteFields || [{ fieldId: 'u', helpers: pub.unite.helpers, leakers: pub.unite.leakers }];
+    S.uniteStage = Math.min(groups.length - 1, Math.max(0, Math.floor(uniteStage) - 1));
+    const active = groups[S.uniteStage];
+    pub.unite.activeFieldId = active.fieldId;
+    for (const p of pub.players) p.status = active.helpers.includes(p.playerId) ? 'helping' : 'done';
   }
   // the result box after a 联防 (server settle → m.public.uniteResult, ui/gameLogic/phases.js uniteResultBox; GitHub #235):
   // ?phase=SETTLE&variant=unite — you (p1) leaked and the helpers stopped every enemy: nobody paid → 全员无伤！;
@@ -473,8 +478,8 @@ function startCombat(phase) {
     pub.bossHp = { hp: 1_240_000, max: 1_990_000 };
   } else if (phase === PHASE.UNITE) {
     kind = 'unite';
-    fields = uniteFields ? uniteFields.map((f) => ({ fieldId: f.fieldId, kind: 'unite', players: f.helpers, live: true }))
-      : [{ fieldId: 'u', kind: 'unite', players: ['p1', 'ai_2'], live: true }];
+    const active = uniteFields?.[S.uniteStage] || { fieldId: 'u', helpers: pub.unite.helpers };
+    fields = [{ fieldId: active.fieldId, kind: 'unite', players: active.helpers, live: true }];
     rect = { ...GEO.UNITE_RECT };
   } else {
     kind = 'normal';
@@ -493,15 +498,15 @@ function startCombat(phase) {
     const c = data.lookup('chess', p.id);
     const colOff = 0;
     const r = boss ? p.row - 7 : p.row;
-    units.push({ id: id++, kind: 'op', side: 'ally', ownerId: ME, defId: p.id, name: c?.name, tier: c?.tier, golden: !!p.golden, spine: c?.charId, avatar: c?.assets?.avatar, x: p.col + colOff, y: r, facing: 1, maxHp: c?.stats?.maxHp || 1000, uid: p.uid });
+    units.push({ id: id++, kind: 'op', side: 'ally', ownerId: kind === 'unite' ? fields[0].players[0] : ME, defId: p.id, name: c?.name, tier: c?.tier, golden: !!p.golden, spine: c?.charId, avatar: c?.assets?.avatar, x: p.col + colOff, y: r, facing: 1, maxHp: c?.stats?.maxHp || 1000, uid: p.uid });
   }
-  if (kind !== 'normal') {
+  if (kind !== 'normal' && (kind !== 'unite' || fields[0].players.length > 1)) {
     for (const p of board.slice(0, 5)) {
       const c = data.lookup('chess', pick(S.pool).chessId);
       const r = boss ? p.row - 7 : p.row;
       // 联防: the second helper's board on the other half, shifted 8 columns (server unite.js); boss pairs: mirrored
       const x = kind === 'unite' ? p.col + 8 : 20 - p.col;
-      units.push({ id: id++, kind: 'op', side: 'ally', ownerId: 'ai_2', defId: c.chessId, name: c.name, tier: c.tier, golden: false, spine: c.charId, avatar: c.assets.avatar, x, y: r, facing: kind === 'unite' ? 1 : -1, maxHp: c.stats.maxHp });
+      units.push({ id: id++, kind: 'op', side: 'ally', ownerId: kind === 'unite' ? fields[0].players[1] : 'ai_2', defId: c.chessId, name: c.name, tier: c.tier, golden: false, spine: c.charId, avatar: c.assets.avatar, x, y: r, facing: kind === 'unite' ? 1 : -1, maxHp: c.stats.maxHp });
     }
   }
   const enemyKeys = S.priv.nextEnemies.map((e) => e.enemyKey);
@@ -581,6 +586,18 @@ function startCombat(phase) {
     return true;
   } };
   setTimeout(tick, 60);
+}
+
+/** Advance a mocked joint-defense timeout with every remaining leaker count intact and a fresh field timer. */
+function advanceUniteStage() {
+  if (S?.pub.phase !== PHASE.UNITE || !Array.isArray(S.pub.unite?.fields)) return false;
+  const next = (S.uniteStage || 0) + 1;
+  if (next >= S.pub.unite.fields.length) return false;
+  const carry = Object.fromEntries(S.pub.unite.leakers.map(pid => [pid, S.pub.players.find(p => p.playerId === pid)?.uniteLeft || 0]));
+  stopBattle();
+  startCombat(PHASE.UNITE, { uniteStage: next + 1, carry });
+  pushPublic();
+  return true;
 }
 
 // ---- mock server --------------------------------------------------------------------------------------------------------
@@ -768,6 +785,7 @@ async function mockRequest(t, f = {}) {
     case 'g.watch': {
       // server Match.watch rules: the other pair's boss field is hidden from a fighting player; no dead targets
       const target = (pub.fields || []).find((x) => x.fieldId === f.fieldId);
+      if (pub.phase === PHASE.UNITE && !target) fail('BAD_TARGET');
       const mine = (pub.fields || []).find((x) => x.players.includes(ME));
       const meAlive = pub.players.find((x) => x.playerId === ME)?.alive !== false;
       if (target && (target.kind === 'boss' || target.kind === 'hidden') && meAlive && mine && mine.fieldId !== target.fieldId) fail('BAD_TARGET');
@@ -901,7 +919,7 @@ async function boot() {
   render(html`<div class="app-root"><div class="app-bg" aria-hidden="true"></div><${GameScreen} /><${ConnectionBanner} /><${ToastHost} /><${UiHosts} /><${GuideHost} /></div>`, document.getElementById('app'));
   renderBar();
   store.subscribe(() => renderBar());
-  globalThis.__MOCK__ = { store, S: () => S, setPhase, setPlayers, mutate: (fn) => { fn(S); refreshPrivate(); }, pushPublic: () => pushPublic(),
+  globalThis.__MOCK__ = { store, S: () => S, setPhase, setPlayers, advanceUniteStage, mutate: (fn) => { fn(S); refreshPrivate(); }, pushPublic: () => pushPublic(),
     hurtDevice: (i, dmg) => S?.battle?.hurtDevice?.(i, dmg) ?? false };
 }
 boot().catch((err) => console.error('[mock] boot failed', err));
