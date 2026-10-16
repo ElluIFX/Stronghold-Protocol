@@ -60,14 +60,14 @@ export class SharedPool {
    * @param {import('./gamedata.js').GameData} gd
    * @param {{ banned?: Iterable<string> }} [opts]
    */
-  constructor(gd, { banned = [] } = {}) {
+  constructor(gd, { banned = [], players } = {}) {
     this.gd = gd;
     const ban = new Set(banned);
     /** @type {Map<string, { cap: number, left: number, tier: number }>} */
     this.entries = new Map();
     for (const id of gd.visibleChess) {
       if (ban.has(id)) continue;
-      const cap = gd.poolCopies(id);
+      const cap = gd.poolCopies(id, players);
       if (cap <= 0) continue;
       this.entries.set(id, { cap, left: cap, tier: gd.tierOf(id) });
     }
@@ -198,13 +198,14 @@ export class SharedPool {
  * 2026-10-14 (#624). [ASSUMED] An item that is consumed, destroyed or removed by elimination no longer occupies
  * stock, consistently with the video's ownership model; this is not a per-match purchase limit. */
 export class SharedItemPool {
-  constructor(gd, players) {
+  constructor(gd, players, { seats } = {}) {
     this.gd = gd;
     this.players = players;
+    this.seats = seats;
     /** @type {Map<string, number>} base id → copies taken past the cap by an already-displayed card */
     this.debt = new Map();
   }
-  cap(id) { return this.gd.itemPoolCopies(id); }
+  cap(id) { return this.gd.itemPoolCopies(id, this.seats); }
   need(id) { return this.gd.isGolden(id) ? 2 : 1; }
   held(id) {
     const base = this.gd.baseIdOf(id);

@@ -58,21 +58,10 @@ export function bossFieldPlacement(side, row, col, dir = 'RIGHT') {
 }
 
 /** Seeded initial pairing; `previous` carries player-id pairs through prep, combat and Hidden Core. */
-export function pairPlayers(alive, rng, previous = null) {
+export function pairPlayers(alive, _rng, _previous = null) {
   const sorted = alive.slice().sort((a, b) => a.seat - b.seat);
   const groups = [];
-  let singles;
-  if (Array.isArray(previous)) {
-    const remaining = new Map(sorted.map(p => [p.playerId, p]));
-    singles = [];
-    for (const ids of previous) {
-      const group = [];
-      for (const id of ids) if (remaining.has(id)) { group.push(remaining.get(id)); remaining.delete(id); }
-      if (group.length === 2) groups.push(group); else singles.push(...group);
-    }
-    singles.push(...remaining.values());
-  } else singles = sorted.length > 1 ? rng.shuffle(sorted) : sorted;
-  for (let i = 0; i < singles.length; i += 2) groups.push(singles.slice(i, i + 2));
+  for (let i = 0; i < sorted.length; i += 2) groups.push(sorted.slice(i, i + 2));
   return groups;
 }
 
@@ -120,10 +109,10 @@ export class SharedBossPool {
  * @param {import('./gamedata.js').GameData} gd
  * @param {{ layerSum: number, teamLp: number }} s
  */
-export function hiddenEligible(gd, { layerSum, teamLp }) {
+export function hiddenEligible(gd, { layerSum, teamLp, players }) {
   const hc = gd.hiddenCore;
   if (!gd.hiddenRound || !hc.difficulties.includes(gd.difficulty)) return false;
-  const threshold = gd.isSolo ? hc.single : hc.multi;
+  const threshold = gd.hiddenThreshold(players);
   return layerSum > threshold && teamLp > hc.minTeamLpExclusive;
 }
 

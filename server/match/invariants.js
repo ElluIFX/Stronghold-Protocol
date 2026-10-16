@@ -218,7 +218,7 @@ export function collectViolations(m, { limit = 25 } = {}) {
       const over = Math.max(0, h - cap);
       const debt = m.itemPool.debtOf(id);
       if (debt > over) fail(`item ${id}: debt ${debt} > overage ${over} (held ${h}, cap ${cap})`);
-      if (!gd.isUnlimitedGiftItem(id) && over > debt) fail(`item ${id}: held ${h} > cap ${cap} without debt ${debt}`);
+      if (over > debt) fail(`item ${id}: held ${h} > cap ${cap} without debt ${debt}`);
     }
   }
 

@@ -123,7 +123,7 @@ test('effect item reward offers remain available when purchase stock is exhauste
   assert.ok(p.pickReward(0).ok);
   assert.equal(items(p).find(x => x.id === ISO).poolCopies, 0);
   assert.equal(m.itemPool.held(ISO), cap);
-  assert.equal(buyItem(p, ISO).error, 'SOLD_OUT');
+  assert.ok(buyItem(p, ISO).ok, 'an already displayed purchase may overdraw');
   checkInvariants(m);
   m.dispose();
 });

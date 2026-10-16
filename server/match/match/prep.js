@@ -167,6 +167,7 @@ export class MatchPrep {
     const r = this.round;
     if (r === this.gd.bossRound) {
       this.hiddenLayerSum = alive.reduce((s, p) => s + p.activatedLayers(), 0);
+      this.hiddenLayerPlayers = alive.length;
       this.startFinalAssault(false);
     } else if (r === this.gd.hiddenRound) {
       this.startFinalAssault(true);

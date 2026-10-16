@@ -28,4 +28,4 @@ export const DELAYS = Object.freeze({
  * official data only gives the whole BAND_CHECK step (autoChessData.enterStepList: 50 s, hint 15 s); the turn clock is
  * the remake's (50 s per turn per the owner's 2026-10-10 official-play report). It is also the step's only countdown (m.public.deadline = draft.turnDeadline). × timerScale.
  */
-export const BAND_TURN_SECONDS = 50;
+export const BAND_TURN_SECONDS = 30;

@@ -52,6 +52,23 @@ export const DEFAULTS = Object.freeze({
   bans: { FUNNY: { core: 0, addon: 1 }, NORMAL: { core: 3, addon: 4 }, HARD: { core: 3, addon: 4 }, ABYSS: { core: 3, addon: 4 } },
   bandDraft: { skipsPerPlayer: 1, timeoutBandId: 'band_bldsk' },
   leftoverFundsKeptByBands: ['band_cannot'],
+  /**
+   * Co-op rooms of 5–8 players (a remake extension — the official game has 1–4; owner decision, docs/DESIGN): with n
+   * players above `players` (4) every count below scales by f = n / players, at or below it nothing changes (1–4 keep
+   * every rule, number, timer and random draw). config.largeRoom may override any key.
+   *   pool copies per chess        ceil(base × f), f from the match's seats (humans + bots) at match start
+   *   leader pool                  the share of 4 × f (bossPoolShareOf): bloodPoint per player alive keeps counting
+   *                                past 4 (perPlayer, 0.2.0), the fixed pool of perPlayer false × f; f from the
+   *                                players alive at that boss phase's start (also the hidden leader); the per-field
+   *                                damage budget / BOSS_HIT shares follow the pool
+   *   Hidden Core co-op threshold  hiddenCore.multi × f, f from the players whose layers are summed (end of R14 prep)
+   *   overtime drain               bossOvertimeDrainPerSec × f, f from the players alive at the boss phase's start
+   *   机变 cards                    max(the round's cards, alive + spCardsPlus) when alive > players (5–8 → 7–10)
+   *   strategy draft turn          bandTurn s (instead of Match.BAND_TURN_SECONDS 30) when the match has > players seats
+   *   机变 later picks              spTurn s (instead of timers.spTurn 16) when > players are alive at the draft start
+   *   result titles                a second pass for > players (results.js assignTitles)
+   */
+  largeRoom: { players: 4, spCardsPlus: 2, bandTurn: 20, spTurn: 12 },
 });
 
 /** Game seconds per real second of a battle (forced 2×): combat limits in data are real seconds (combatTimeLimit). */
@@ -65,14 +82,18 @@ export const COMBAT_TIME_SCALE = 2;
  *          players alive when the fight starts — bots and AI 托管 seats count, eliminated and departed seats do not —
  *          at most `aliveFull` (4); a count left out means a full team;
  *          `perPlayer` false: the fixed pool of 0.1.x (「保持固定血量」, restorable with `solo` 0.25): `coop` whatever the
- *          count, × min(alive, aliveFull) / aliveFull with `aliveScaling`.
+ *          count, × min(alive, aliveFull) / aliveFull with `aliveScaling`;
+ *   co-op rooms of 5–8 (remake extension, DEFAULTS.largeRoom): either share × alive / `largeRoomPlayers` (4) when more
+ *          than `largeRoomPlayers` are alive — the per-player rule then counts every player alive (8 alive: × 8); 1–4
+ *          alive, solo or a count left out: unchanged.
  * @param {object|null|undefined} modeScale config.modes[modeId].bossHpScale
  * @param {object|null|undefined} cfgScale config.bossHpScale
  * @param {boolean} isSolo
  * @param {number} [aliveCount] alive players at the Final Assault / Hidden Core start (co-op)
+ * @param {number} [largeRoomPlayers] GameData.largeRoom.players (config.largeRoom; default 4)
  * @returns {number}
  */
-export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount) {
+export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount, largeRoomPlayers = DEFAULTS.largeRoom.players) {
   const ms = modeScale && typeof modeScale === 'object' ? modeScale : {};
   const cs = cfgScale && typeof cfgScale === 'object' ? cfgScale : {};
   const pick = (k, d) => (Number.isFinite(ms[k]) && ms[k] > 0 ? ms[k] : Number.isFinite(cs[k]) && cs[k] > 0 ? cs[k] : d);
@@ -81,8 +102,11 @@ export function bossPoolShareOf(modeScale, cfgScale, isSolo, aliveCount) {
   const full = Math.max(1, Math.floor(pick('aliveFull', 4)));
   const n = Number(aliveCount);
   const alive = Number.isFinite(n) && n >= 1 ? Math.min(full, Math.floor(n)) : full;
-  if (flag('perPlayer', true)) return pick('coop', 1) * alive;
-  return pick('coop', 1) * (flag('aliveScaling', false) ? alive / full : 1);
+  const share = flag('perPlayer', true) ? pick('coop', 1) * alive
+    : pick('coop', 1) * (flag('aliveScaling', false) ? alive / full : 1);
+  const large = Number.isInteger(largeRoomPlayers) && largeRoomPlayers > 0 ? largeRoomPlayers : DEFAULTS.largeRoom.players;
+  const k = Math.floor(n);
+  return Number.isFinite(k) && k > large ? share * (k / large) : share;
 }
 
 /** Strip the _a/_b suffix of an item id (the registry key of an item family). */
@@ -105,10 +129,6 @@ export class GameData {
     const chess = this.raw.chess && typeof this.raw.chess === 'object' ? this.raw.chess : {};
     this._chess = chess;
     this._items = this.raw.items && typeof this.raw.items === 'object' ? this.raw.items : {};
-    // Fixed operator gifts are unlimited outputs, but every produced normal/advanced item still occupies 1/2 copies
-    // (card-pool experiment BV1eLXXBqEgF, maintainer-confirmed 2026-10-11). Random subset gifts are not exempt.
-    this._fixedGiftItems = new Set(Object.values(this.raw.garrisons || {})
-      .filter(g => g.effectKey === 'SERVER_GAIN_EQUIP').map(g => g.bbStr?.chess).filter(id => this._items[id]));
     this._bonds = this.raw.bonds && typeof this.raw.bonds === 'object' ? this.raw.bonds : {};
     /** visible, shop-eligible base (normal) chess ids */
     this.visibleChess = Object.keys(chess).filter((id) => {
@@ -152,8 +172,9 @@ export class GameData {
    * 所有人将一起对敌方领袖造成伤害"; the mirrored copies of a pair field share it — notice 5114 "两侧的敌方领袖共享生命值
    * （敌方领袖的总生命值不变）", which is about those copies). Size = bloodPoint[difficulty] × bossPoolShare: the table value
    * per player alive when the fight starts (the owner's decision of 2026-10-06, PR #209; it replaces the fixed pool of
-   * 「保持固定血量」, which config bossHpScale restores — bossPoolShareOf); `aliveCount` omitted ⇒ a full team. Leaders are
-   * never scaled by enemyScale ("领袖单位于服务器的生命值加成不受上述加成影响").
+   * 「保持固定血量」, which config bossHpScale restores — bossPoolShareOf); `aliveCount` omitted ⇒ a full team. Rooms of
+   * 5–8 (remake extension, DEFAULTS.largeRoom): × alive / 4 on top of the share of 4, so the per-player rule keeps counting
+   * every player alive. Leaders are never scaled by enemyScale ("领袖单位于服务器的生命值加成不受上述加成影响").
    * @param {string} bossId
    * @param {number} [aliveCount] alive players at the Final Assault / Hidden Core start (co-op)
    * @returns {number}
@@ -168,11 +189,55 @@ export class GameData {
   }
 
   /**
-   * Multiplier of bloodPoint for the leader pool (see bossPoolHp; the rule and the config keys: bossPoolShareOf).
+   * Multiplier of bloodPoint for the leader pool (see bossPoolHp; the rule and the config keys: bossPoolShareOf, with
+   * this match's largeRoom.players for the 5–8 factor).
    * @param {number} [aliveCount]
    */
   bossPoolShare(aliveCount) {
-    return bossPoolShareOf(this.mode.bossHpScale, this.config.bossHpScale, this.isSolo, aliveCount);
+    return bossPoolShareOf(this.mode.bossHpScale, this.config.bossHpScale, this.isSolo, aliveCount, this.largeRoom.players);
+  }
+
+  // ---- co-op rooms of 5–8 players (remake extension, DEFAULTS.largeRoom) --------------------------------------
+
+  /** DEFAULTS.largeRoom with config.largeRoom's valid keys over it. */
+  get largeRoom() {
+    const c = this.config.largeRoom && typeof this.config.largeRoom === 'object' ? this.config.largeRoom : {};
+    const d = DEFAULTS.largeRoom;
+    const pos = (v, dv) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : dv);
+    return {
+      players: posIntOr(c.players, d.players),
+      spCardsPlus: Number.isInteger(c.spCardsPlus) && c.spCardsPlus >= 0 ? c.spCardsPlus : d.spCardsPlus,
+      bandTurn: pos(c.bandTurn, d.bandTurn),
+      spTurn: pos(c.spTurn, d.spTurn),
+    };
+  }
+
+  /** Whether `n` players (seats or alive, per rule) make a large room: co-op and n > largeRoom.players (4). */
+  isLargeRoom(n) {
+    const k = Math.floor(Number(n));
+    return !this.isSolo && Number.isFinite(k) && k > this.largeRoom.players;
+  }
+
+  /**
+   * The large-room factor f = max(1, n / largeRoom.players): exactly 1 for 1–4 players, solo, or a missing / bad count
+   * (5 → 1.25, 6 → 1.5, 7 → 1.75, 8 → 2).
+   * @param {number} [n]
+   */
+  largeRoomFactor(n) {
+    return this.isLargeRoom(n) ? Math.floor(Number(n)) / this.largeRoom.players : 1;
+  }
+
+  /**
+   * Seconds of one co-op strategy-draft turn in a match of `seats` players (humans + bots): `base`
+   * (Match.BAND_TURN_SECONDS, 30) up to 4 seats, largeRoom.bandTurn (20) above.
+   */
+  bandTurnSeconds(seats, base) {
+    return this.isLargeRoom(seats) ? this.largeRoom.bandTurn : base;
+  }
+
+  /** Seconds of a later 机变 pick with `alive` players at the draft start: timers.spTurn (16); largeRoom.spTurn (12) above 4. */
+  spTurnSeconds(alive) {
+    return this.isLargeRoom(alive) ? this.largeRoom.spTurn : this.timer('spTurn');
   }
 
   /** config.titles with the tuning overrides (stat / rule per title id) merged in. */
@@ -312,10 +377,19 @@ export class GameData {
   }
 
   /**
-   * Copies of a base chess in the shared pool — and, for a DIY slot, of a slotted 自选 piece in its player's own stock
-   * (player/diy.js buildDiyStock).
+   * Copies of a base chess in the shared pool of a match with `players` seats (humans + bots at match start): the
+   * official count (economy.poolCopies by tier, poolCopiesOverrides e.g. 缪尔赛思 4) for 1–4 seats or when omitted;
+   * ceil(count × seats / 4) for 5–8 (largeRoom, remake extension: 8 seats double every count).
+   * @param {string} baseId
+   * @param {number} [players]
    */
-  poolCopies(baseId) {
+  poolCopies(baseId, players) {
+    const base = this._officialPoolCopies(baseId);
+    if (!this.isLargeRoom(players)) return base;
+    return Math.ceil((base * Math.floor(Number(players))) / this.largeRoom.players);
+  }
+
+  _officialPoolCopies(baseId) {
     const ov = this.economy.poolCopiesOverrides;
     const tier = this.tierOf(baseId);
     const pc = this.economy.poolCopies;
@@ -328,16 +402,21 @@ export class GameData {
     return base * multiplier;
   }
 
-  /** Normal equipment copies in the shared pool; effect-only items have no shop stock limit. */
-  itemPoolCopies(id) {
+  /**
+   * Normal equipment copies in the shared pool; effect-only items have no shop stock limit. A co-op match of 5–8 seats
+   * (`players`, humans + bots at match start) has ceil(count × seats / 4), like poolCopies (remake extension, the
+   * maintainer's decision of 2026-10-11, docs/design/fork.md §F8); 1–4 seats or omitted: the measured count.
+   * @param {string} id
+   * @param {number} [players]
+   */
+  itemPoolCopies(id, players) {
     const base = this.baseIdOf(id), rec = this.item(base);
     if (!rec || !isShopItem(rec)) return null;
     const count = this.economy.itemPoolCopiesOverrides?.[base] ?? this.economy.itemPoolCopies?.[rec.tier];
-    return Number.isInteger(count) && count >= 0 ? count : null;
+    if (!(Number.isInteger(count) && count >= 0)) return null;
+    if (!this.isLargeRoom(players)) return count;
+    return Math.ceil((count * Math.floor(Number(players))) / this.largeRoom.players);
   }
-
-  /** Whether a fixed trait gift may be produced beyond stock (including the advanced version of that item). */
-  isUnlimitedGiftItem(id) { return this._fixedGiftItems.has(this.baseIdOf(id)); }
 
   /** Copies needed to merge (0 = never merges: golden chess). */
   mergeCount(id) {
@@ -477,12 +556,28 @@ export class GameData {
   /** Team LP drained per GAME second of overtime (1 per real second = 0.5 per game second). */
   get bossOvertimeDrain() { return this.bossOvertimeDrainReal / this.combatTimeScale; }
   /**
-   * Team LP the overtime drain has taken when a boss field clock reads `gt` game seconds: bossOvertimeDrainReal per
-   * whole REAL second past bossOvertimeAfterReal (the first point at 151 real s).
+   * Team LP drained per REAL second of overtime in a boss phase that started with `aliveCount` players:
+   * bossOvertimeDrainReal (1) × the large-room factor max(1, alive / 4) (remake extension; 1–4 or omitted ⇒ unscaled).
+   * @param {number} [aliveCount]
    */
-  bossOvertimeDue(gt, afterReal = this.bossOvertimeAfterReal) {
+  bossOvertimeDrainFor(aliveCount) {
+    return this.bossOvertimeDrainReal * this.largeRoomFactor(aliveCount);
+  }
+  /**
+   * Team LP the overtime drain has taken when a boss field clock reads `gt` game seconds: bossOvertimeDrainReal per
+   * whole REAL second past `afterReal` (default bossOvertimeAfterReal: the first point at 151 real s; a team with an AI
+   * teammate starts later, bossRounds.js bossOvertimeStartReal — 0.2.4). With more than 4 players alive at the boss
+   * phase's start (`aliveCount`, remake extension) the rate is bossOvertimeDrainFor(aliveCount), and the total is
+   * floored to whole LP (5 alive: 1, 2, 3, 5, 6, 7, 8, 10 … at 1.25 LP/s).
+   * @param {number} gt
+   * @param {number} [aliveCount]
+   * @param {number} [afterReal]
+   */
+  bossOvertimeDue(gt, aliveCount, afterReal = this.bossOvertimeAfterReal) {
     const over = (Number(gt) || 0) / this.combatTimeScale - afterReal;
-    return over >= 1 ? Math.floor(over) * this.bossOvertimeDrainReal : 0;
+    if (!(over >= 1)) return 0;
+    if (!this.isLargeRoom(aliveCount)) return Math.floor(over) * this.bossOvertimeDrainReal;
+    return Math.floor(Math.floor(over) * this.bossOvertimeDrainFor(aliveCount) + 1e-9);
   }
   get dp() {
     const d = this.config.dp && typeof this.config.dp === 'object' ? this.config.dp : {};
@@ -503,6 +598,17 @@ export class GameData {
       minTeamLpExclusive: numOr(h.minTeamLpExclusive, DEFAULTS.hiddenCore.minTeamLpExclusive),
       difficulties: Array.isArray(h.difficulties) ? h.difficulties : DEFAULTS.hiddenCore.difficulties,
     };
+  }
+  /**
+   * The Σ activated layers the Hidden Core needs to exceed: solo hiddenCore.single (350); co-op hiddenCore.multi (1200)
+   * × max(1, players / 4), `players` = the players whose layers are summed (remake extension for 5–8: 1500 … 2400;
+   * 1–4 or omitted ⇒ 1200).
+   * @param {number} [players]
+   */
+  hiddenThreshold(players) {
+    const hc = this.hiddenCore;
+    if (this.isSolo) return hc.single;
+    return this.isLargeRoom(players) ? hc.multi * this.largeRoomFactor(players) : hc.multi;
   }
   bans(difficulty) {
     const b = this.config.bans && this.config.bans[difficulty];
@@ -567,7 +673,8 @@ export class GameData {
    * that the chess makes under `loadout` ({ skillIndex } from shared/protocol.js resolveLoadout; absent ⇒ its default
    * skill): the owner variant's `sources` (`bySkill[skillIndex]` for a non-default skill) name a talent or a skill —
    * 赫默 / 巫恋 on S1 make no drone / doll. `count` = the summon's deploy limit (PRTS 卫戍协议/帮助 "根据召唤物部署数量
-   * 上限（非初始持有量），发送等量召唤物至手牌区": 凯瑟琳 2 of her 3 devices).
+   * 上限（非初始持有量），发送等量召唤物至手牌区": 凯瑟琳 2 of her 3 devices), the selected module's own when its variant
+   * has one (`byModule[loadout.moduleId].stats`, as player/diy.js diyGameData reads it for a 自选 record).
    */
   placeableTokens(chessId, loadout = null) {
     const c = this.chess(chessId);
@@ -583,7 +690,8 @@ export class GameData {
         const src = Array.isArray(alt?.sources) ? alt.sources : Array.isArray(v.sources) ? v.sources : [];
         if (!src.includes('talent') && !src.includes('skill')) continue;
       }
-      const count = posIntOr(v?.stats?.deployLimit, posIntOr(t.deployLimit, 1));
+      const mod = v && loadout && typeof loadout.moduleId === 'string' && v.byModule ? v.byModule[loadout.moduleId] : null;
+      const count = posIntOr(mod?.stats?.deployLimit, posIntOr(v?.stats?.deployLimit, posIntOr(t.deployLimit, 1)));
       out.push({ tokenId: tid, count: Math.min(count, 9) });
     }
     return out;
