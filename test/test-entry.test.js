@@ -64,3 +64,12 @@ for (const fails of [false, true]) test(`the programmatic runner exits ${fails ?
   assert.equal(child.status, fails ? 1 : 0, child.stdout + child.stderr);
   assert.doesNotMatch(child.stdout + child.stderr, /Fixture was executed/);
 });
+
+test('the CLI rejects an inherited test context instead of reporting a silent pass', () => {
+  const child = spawnSync(process.execPath, [path.join(ROOT, 'tools/test.mjs')], {
+    env: { ...process.env, NODE_TEST_CONTEXT: 'child-v8' }, encoding: 'utf8', timeout: 15000,
+  });
+  assert.equal(child.error, undefined, child.error?.message);
+  assert.equal(child.status, 2, child.stdout + child.stderr);
+  assert.match(child.stderr, /outside a Node test child process/);
+});

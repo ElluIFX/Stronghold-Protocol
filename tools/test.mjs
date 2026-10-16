@@ -27,6 +27,7 @@ export function discoverTests(root = ROOT) {
 }
 
 export function main(root = ROOT) {
+  if (process.env.NODE_TEST_CONTEXT !== undefined) throw new Error('The test entry must run outside a Node test child process');
   const files = discoverTests(root);
   if (!files.length) throw new Error('No *.test.js files found in test/');
   // Programmatic files avoid Windows command-line length limits and Node's broader implicit test discovery.
