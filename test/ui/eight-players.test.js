@@ -343,4 +343,3 @@ describe('boss overtime of 5–8 players: the DOT warning follows m.public.overt
     assert.match(read('public/js/ui/hud.js'), /overtimeDrainPerSec\(config, pub\)/);
   });
 });
-

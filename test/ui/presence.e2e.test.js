@@ -6,8 +6,8 @@
 // Desktop: the title footer carries the release version AND the live counters (read from /healthz: the title screen
 // has no session), a second page (another player, in the lobby) is counted — its top bar shows the numbers the server
 // pushes — and the title page catches up within one poll; closing a page takes the count back down.
-// Phones (640×360, 844×390, touch) in Chinese and English: the readout is on screen, fully readable (no ellipsis), at
-// At least 10 px, with no overlap in the title footer or lobby top bar.
+// Phones (640×360, 844×390, touch) in Chinese and English: the readout is on screen, fully readable (no ellipsis),
+// at least 10 px, with no overlap in the title footer or lobby top bar.
 // Every page must finish with zero console errors / page errors / failed requests. Screenshots: test/e2e/out/presence-*.png
 
 import { test, describe, before, after } from 'node:test';

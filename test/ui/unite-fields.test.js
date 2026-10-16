@@ -267,7 +267,7 @@ describe('a leaker\'s ×N and pending LP per field (uniteLocalFor → rowLp)', (
 
   test('wiring: the game screen hands the drawn field id with the counts; the team panel filters per row; the own ×N likewise', () => {
     const game = read('public/js/screens/game.js');
-    assert.match(game, /const uniteField = uniteLocal \? drawnBattle\.fieldId : null;/);
+    assert.match(game, /const uniteField = uniteLocal \? battleState\.fieldId : null;/);
     assert.match(game, /const ownUniteLocal = uniteLocalFor\(pub, uniteLocal, uniteField, myId\);\s*const localLeft = leaker && ownUniteLocal \? \(ownUniteLocal\[myId\] \?\? 0\) : undefined;/);
     assert.match(game, /<\$\{TeamPanel\}[^\n]*uniteLocal=\$\{uniteLocal\} uniteField=\$\{uniteField\}/);
     const panel = read('public/js/ui/teamPanel.js');
@@ -310,11 +310,11 @@ describe('‹ 联防阵地 N › (ui/combatHud.js)', () => {
 
   test('wiring: offered under client-side combat on a 联防 field; a pick of the default field is 返回战场', () => {
     const game = read('public/js/screens/game.js');
-    assert.match(game, /const uniteList = cc && phase === PHASE\.UNITE && field && field\.kind === 'unite' \? uniteSwitchFields\(pub, myId, \{ alive \}\) : \[\];/);
+    assert.match(game, /const uniteList = cc && phase === PHASE\.UNITE && field\?\.kind === 'unite' \? uniteSwitchFields\(pub, myId, \{ alive \}\) : \[\];/);
     assert.match(game, /uniteFields: uniteSw \}/);
     assert.match(game, /if \(L\.watching && fid === uniteHomeField\(L\.pub, L\.myId, watchPrefRef\.current\)\) \{ backHome\(\); return; \}\s*requestWatch\(fid\);/);
     assert.match(game, /const target = backTarget\(L\.pub, L\.myId, L\.home, L\.watching, watchPrefRef\.current\);\s*if \(target\) watchBack\(target\);/);
-    assert.match(game, /const target = backTarget\(L\.pub, L\.myId, L\.home, L\.watching, watchPrefRef\.current\);\s*if \(target && \(isCombatPhase\(L\.pub\?\.phase\) \|\| \(L\.alive && !L\.spectator\)\)\) watchBack\(target\);/);
+    assert.match(game, /const target = backTarget\(L\.pub, L\.myId, L\.home, L\.watching, watchPrefRef\.current\);\s*if \(target && \(combatNow \|\| \(L\.alive && !L\.spectator\)\)\) watchBack\(target\);/);
     // the follow preference mirrors the server's watchPref: accepted watches and the server's prep scout
     assert.match(game, /const watchBack = \(target\) => \{ void actions\.watch\(target\)\.then\(\(ok\) => \{ if \(ok\) notePref\(target\); \}\); \};/);
     assert.match(game, /\} else notePref\(fid, playerId\);\s*return ok;/);
