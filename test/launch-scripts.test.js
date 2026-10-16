@@ -10,7 +10,7 @@ import { parseArgs, serverEnv, SCRIPT_MODES } from '../scripts/launch.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-test('--scripts sets SP_PLUGIN_SCRIPTS for the server; off removes an inherited one; no flag keeps it', () => {
+test('--scripts sets SP_PLUGIN_SCRIPTS for the server; no flag preserves its inherited value', () => {
   assert.deepEqual([...SCRIPT_MODES], ['off', 'sandbox', 'trusted', 'trusted-force']);
   for (const argv of [['--scripts', 'sandbox'], ['--scripts=sandbox']]) {
     const o = parseArgs(argv);
@@ -18,10 +18,22 @@ test('--scripts sets SP_PLUGIN_SCRIPTS for the server; off removes an inherited 
     assert.deepEqual(o.setupArgs, [], 'not passed on to setup');
     assert.equal(serverEnv(o, {}).SP_PLUGIN_SCRIPTS, 'sandbox');
   }
-  assert.equal(serverEnv(parseArgs(['--scripts', 'off']), { SP_PLUGIN_SCRIPTS: 'sandbox' }).SP_PLUGIN_SCRIPTS, undefined);
   assert.equal(serverEnv(parseArgs([]), { SP_PLUGIN_SCRIPTS: 'trusted' }).SP_PLUGIN_SCRIPTS, 'trusted');
   const env = serverEnv(parseArgs(['--port', '3001', '--scripts', 'trusted-force', '--no-assets']), {});
   assert.deepEqual([env.PORT, env.SP_PLUGIN_SCRIPTS], ['3001', 'trusted-force']);
+});
+
+test('--scripts off stays explicit with or without an inherited script mode', () => {
+  for (const argv of [['--scripts', 'off'], ['--scripts=off']]) {
+    const options = parseArgs(argv);
+    assert.deepEqual(options.setupArgs, [], 'the script mode belongs to the server');
+    for (const mode of [undefined, 'off', 'sandbox', 'trusted', 'trusted-force']) {
+      const base = mode === undefined ? {} : { SP_PLUGIN_SCRIPTS: mode };
+      assert.equal(serverEnv(options, base).SP_PLUGIN_SCRIPTS, 'off', `inherited: ${mode}`);
+      assert.equal(base.SP_PLUGIN_SCRIPTS, mode, 'the parent environment remains unchanged');
+    }
+  }
+  assert.equal(serverEnv(parseArgs([]), {}).SP_PLUGIN_SCRIPTS, undefined, 'an omitted flag leaves bootstrap defaults available');
 });
 
 test('start-windows-sandbox.bat is start-windows.bat --scripts sandbox (CRLF, other arguments passed on)', () => {

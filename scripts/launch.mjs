@@ -56,11 +56,10 @@ export function parseArgs(argv) {
   return o;
 }
 
-/** The server's environment: PORT / HOST, and SP_PLUGIN_SCRIPTS from --scripts (off removes an inherited one). */
+/** Preserve an explicit --scripts mode, including off, so the server's bootstrap default cannot replace it. */
 export function serverEnv(o, base = process.env) {
   const env = { ...base, PORT: String(o.port), HOST: o.host };
-  if (o.scripts === 'off') delete env.SP_PLUGIN_SCRIPTS;
-  else if (o.scripts) env.SP_PLUGIN_SCRIPTS = o.scripts;
+  if (o.scripts) env.SP_PLUGIN_SCRIPTS = o.scripts;
   return env;
 }
 
