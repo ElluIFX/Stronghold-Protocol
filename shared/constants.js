@@ -112,14 +112,10 @@ export function layerGainRoom(before, n) {
 }
 
 /**
- * Official boss-hit limit "限伤" (docs/research/11-limits-official.md §2): `AutoChessBattleConst.MAX_BATTLE_DAMAGE =
- * 300000`. In a boss battle outside training — our battle kinds 'boss' (Final Assault) and 'hidden' (Hidden Core) — a
- * single hit on a leader (`AutoChessBattleUtil.IsBossEnemy`: an enemyId of activity_table autoChessData.bossInfoDict
- * = data/bosses.json `enemyKey`; in the sim the tag-'boss' units: those leaders and their mirrored copies, never parts,
- * escorts or drones) whose `ceil(final damage)` ≥ this is CANCELLED: 0 damage, nothing credited to the shared pool
- * (`AutoChessStepModeManager._OnBossEnemyTakeDamage` → `modifier.Cancel()`). It is not a clamp: a hit of 299999 lands.
- * Checked in server/sim/damage.js (dealDamage after DEF / RES and every multiplier, before shields; Battle.loseHp — not
- * the 胄 drone link's pool share, `noHitLimit`, DESIGN §25.13.4). Minions, normal rounds and 联防 are unaffected.
+ * Boss / hidden leader damage cap, applied per hit after DEF / RES and all multipliers, before shields.
+ * Hits above the limit deal at most this amount and retain normal HP, pool, hook and stat processing.
+ * Leader copies share the cap; parts, minions, normal rounds and joint defense are unaffected.
+ * Battle.loseHp uses the same cap except for pool shares explicitly marked `noHitLimit`.
  * 0 / Infinity = off.
  */
 export const BOSS_HIT_LIMIT = 300000;

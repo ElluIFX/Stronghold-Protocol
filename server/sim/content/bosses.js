@@ -89,7 +89,7 @@ import { hypot, powi } from '../detmath.js';
  * 剑/锤 only takes damage outside its invulnerable 初始模式 (its 出击模式 dive and 【瘫痪】). The two official texts
  * disagree on the dive: the PRTS talent says "受到伤害时" (any damage), the in-game handbook (data/enemies.json abilities,
  * PRTS 能力) "被击落时受到伤害以一定比例传递" (only once shot down) — the dive hits passing on is [ASSUMED] (the talent
- * text; ≤ 15 hits per dive). A loss passed on to a leader is one hit for 限伤 (sim/damage.js leaderHitCancelled, via
+ * text; ≤ 15 hits per dive). A loss passed on to a leader is one hit for the cap (sim/damage.js limitLeaderHit, via
  * Battle.loseHp). v2.5: 0.5 [ASSUMED], and a 剑/锤 passed damage on only while grounded (DESIGN §20.10, §20.13).
  */
 export const PART_TRANSFER = 1;
@@ -116,7 +116,7 @@ const BLADE_HAND = Object.freeze({ enemy_9014_acstma: 'left_hand', enemy_9015_ac
  * 限伤 (shared/constants.js BOSS_HIT_LIMIT): the share is no hit and passes the limit (Battle.loseHp `noHitLimit`).
  * Since the pool counts every player alive at the fight's start (DESIGN §25.13.4, the owner's decision of 2026-10-06),
  * the hidden 胄 终极 pool reaches 21 600 000 / 28 800 000 with 3 / 4 players — a drone 432 000 / 576 000, which the
- * limit (ceil ≥ 300000) would cancel, so drones would stop counting exactly in the largest fights. [ASSUMED]: the
+ * per-hit cap would reduce these shares without their explicit bypass. [ASSUMED]: the
  * official client checks every damage modifier on a leader (research 11 §2.1) and PRTS calls the drone's 2 % 真实伤害,
  * but which max HP it reads is not documented; the remake reads the pool and keeps the 2 % share.
  */
