@@ -5,6 +5,7 @@ import { PHASE } from '../../../../shared/constants.js';
 import { bossLevelSeconds } from '../matchStatus.js';
 import { clamp, int, isObj, sortedPlayers } from './shared.js';
 import { normalizeSp } from './draft.js';
+import { multiUnite, uniteFields } from '../../battle/observe.js';
 import { t } from '../../../../shared/i18n.js';
 
 
@@ -31,6 +32,17 @@ export function phaseMode(phase) {
 }
 
 export const isCombatPhase = (phase) => COMBAT_PHASES.has(phase);
+
+/**
+ * The bond strip's state a phase change sets on a phone (DESIGN §F2.1): folded at the start of each 休整期 — the zoomed
+ * prep board puts the back row under the strip. null: leave it as the player set it (every other phase keeps the
+ * player's choice, issue #142; not a phone). The 盟约 / 收起 button still folds and unfolds it by hand.
+ * @param {string} phase · @param {boolean} phone · @returns {boolean|null} true = folded
+ */
+export function bondStripFolded(phase, phone) {
+  if (!phone) return null;
+  return phase === PHASE.PREP ? true : null;
+}
 /**
  * The HUD's "你已被淘汰 · 可继续观战队友" pill of an eliminated player: outside combat only — in combat and in the SETTLE
  * after it the combat HUD (screens/game.js CombatHud, rendered for mode 'settle' too) already says it, and two
@@ -61,6 +73,11 @@ export function phaseBanner(phase, pub, { alive = true, spectator = false } = {}
     case PHASE.COMBAT: return { title: t('作战开始'), micro: 'COMBAT', tone: 'orange', sub: t('各自行动阶段') };
     case PHASE.UNITE: {
       const names = new Map(sortedPlayers(pub).map((p) => [p.playerId, p.name || t('博士')]));
+      // several 联防 fields (more than 4 alive): each field's helpers, the fields apart — "联防：A、B / C、D"
+      if (multiUnite(pub)) {
+        const groups = uniteFields(pub).map((f) => f.helpers.map((id) => names.get(id)).filter(Boolean).join('、')).filter(Boolean);
+        if (groups.length) return { title: t('联防阶段'), micro: 'JOINT DEFENSE', tone: 'orange', sub: t('联防：{names}', { names: groups.join(' / ') }) };
+      }
       const helpers = Array.isArray(pub?.unite?.helpers) ? pub.unite.helpers.map((id) => names.get(id)).filter(Boolean) : [];
       return { title: t('联防阶段'), micro: 'JOINT DEFENSE', tone: 'orange', sub: helpers.length ? t('联防：{names}', { names: helpers }) : t('完美作战的博士迎战突破防线的敌人') };
     }
@@ -252,7 +269,9 @@ export function phaseTotalSeconds(pub, config, myId = null) {
     case PHASE.SP_DRAFT: {
       const sp = normalizeSp(pub.sp, pub.players);
       const first = !sp || sp.pickedCount === 0;
-      return first ? (num(timers.spFirst) ?? 30) : (num(timers.spTurn) ?? 16);
+      // a room of more than 4 players (remake extension) has shorter later picks: the server says the turn's length
+      // (m.public sp.turnSeconds, sent only then); 1–4 players: the config's timers
+      return num(pub.sp?.turnSeconds) ?? (first ? (num(timers.spFirst) ?? 30) : (num(timers.spTurn) ?? 16));
     }
     case PHASE.PREP: return num(mode?.rounds?.[String(pub.round)]?.prepTime);
     case PHASE.COMBAT:

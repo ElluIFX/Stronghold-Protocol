@@ -22,6 +22,17 @@ function withTimeout(p, ms, signal) {
   });
 }
 
+/**
+ * The texture of a resource file: invalid until its image loads. A file that fails to load (a host without the game's
+ * art, a network error) leaves the texture invalid (its users keep their placeholder) — instead of Pixi's unhandled
+ * rejection, which the page would show as an unexpected error.
+ */
+function fileTexture(P, url) {
+  const texture = P.Texture.from(url);
+  texture.baseTexture.resource.load().catch(() => {});
+  return texture;
+}
+
 /** Wrap whatever the caller passed as `assets` into the store API of public/js/assets.js. */
 function resolveAssets(a) {
   if (a && typeof a === 'object' && typeof a.ready === 'function' && typeof a.spineEntry === 'function') return a;
@@ -81,6 +92,14 @@ function makeData(src) {
 
 const QUALITY_RES = { high: 2, medium: 1.5, low: 1 };
 
+/**
+ * Frame-rate cap of the ticker (phone audit P8): a 90 / 120 Hz phone drew 120 fps even in the nearly static prep phase
+ * (battery, heat). PIXI's limiter drops whole display frames and compares whole milliseconds, so a cap of exactly 60
+ * also skips frames on a 60 Hz display (measured on its Ticker.update: ~57–59 fps with 33 ms gaps); two fps of headroom
+ * keep 60 Hz at 60 and 90 / 120 / 144 Hz at ~60. Animation time is unaffected: frameBody takes its dt from performance.now().
+ */
+const MAX_FPS = 62;
+
 /** Pixel-ratio cap of the 3D board canvas per quality (its fill cost is the PBR board, not the sprites). */
 const BOARD_RES = { high: 2, medium: 1.25, low: 1 };
 
@@ -112,4 +131,4 @@ export function releaseGl(renderer) {
   }
 }
 
-export { withTimeout, resolveAssets, makeData, QUALITY_RES, BOARD_RES };
+export { withTimeout, fileTexture, resolveAssets, makeData, QUALITY_RES, MAX_FPS, BOARD_RES };

@@ -1,6 +1,8 @@
 // Left team panel (research 06 §11.1, research 09 §3.1): one row per seat — avatar (band icon once picked), name, LP
 // tower, status glyph (… acting / ✓ ready / ⌛ deciding / ⚔ combat / door left / ✕ dead), AI badge, "you" marker, the
-// field being watched (eye badge), and emote bubbles. In a boss round the viewer's pair is framed in green from the
+// field being watched (eye badge), and emote bubbles. A player whose avatar is a GitHub picture / an AI portrait shows
+// the picked strategy (band) as a small icon beside the name at the top of the row (issue #6: the avatar no longer
+// shows it — for teammates and public spectators alike). In a boss round the viewer's pair is framed in green from the
 // round's start (gameLogic teamFrameIds; community report of 2026-10-06, item 51).
 // Observing (client-side combat, `observe` prop — the official flow): tapping a teammate's avatar expands a mint
 // "前往查看" button under the row (when that teammate can be observed now; otherwise the reason is toasted through
@@ -16,16 +18,22 @@
 // rising when one splits) — next to lp − min(lpCapPerRound, N): the own row the top bar's value, a teammate's row the
 // local 联防 replica's count while it is on screen (`uniteLocal`: the battle runner's state().uniteLeft, the same battle
 // the player watches, so the number moves with the kills on screen), else m.public players[].uniteLeft (the authority's
-// report, ~1 Hz).
+// report, ~1 Hz). Several 联防 fields (more than 4 alive, a remake extension): the replica on screen counts only its own
+// field's leakers (`uniteField`, battle/observe.js uniteLocalFor) — a leaker of another field reads m.public.
+// 5–8 players (a remake extension; the official room has 4 seats): the rows are compact (team--compact — a smaller
+// avatar, name and LP on one line, 前往查看 / 返回战场 beside the row instead of under it), so 8 rows end above the corner
+// buttons (交流 / ⚙ / 📖 / ⛶) on the smallest phone. 1–4 players keep the full rows.
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
 import { html, Icon, Tooltip } from './components.js';
-import { PlayerAvatar, LpTower, GIcon, LocalSprite } from './gameComponents.js';
+import { PlayerAvatar, LpTower, GIcon, LocalSprite, BandIcon } from './gameComponents.js';
 import { EmoteBubble } from './emotes.js';
 import { STATUS_META, sortedPlayers, teamFrameIds } from './gameLogic.js';
 import { MissTag, uniteRemaining } from './hud.js';
+import { uniteLocalFor } from '../battle/observe.js';
 import { localAsset } from '../data.js';
+import { useStore } from '../store.js';
 import { t } from '../../../shared/i18n.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
@@ -110,20 +118,40 @@ export function rowLpTip(lp, cap = 10) {
 }
 
 /**
+ * Whether a row's avatar is something other than the player's band icon (an account picture, an AI's portrait), so
+ * the strategy needs its own tag (PlayerAvatar falls back to the band icon only for a human without a picture).
+ * @param {any} p m.public players[] entry @param {string|null|undefined} seatAvatar room seat avatarUrl
+ */
+export function bandTagShown(p, seatAvatar) {
+  if (!p || typeof p.bandId !== 'string' || !p.bandId) return false;
+  return !!p.isBot || !!(seatAvatar || p.avatarUrl);
+}
+
+/** Rows the full-size panel holds (the official 4-seat room): a larger team (5–8 players, a remake extension) gets the
+ *  compact rows (`team--compact`, css/screens/game.css) so 8 rows stay clear of the corner buttons on phones. */
+export const TEAM_FULL_ROWS = 4;
+/** Whether a team of `n` players uses the compact rows (never 1–4 players: their panel is the official one). */
+export const teamCompact = (n) => Number(n) > TEAM_FULL_ROWS;
+
+/**
  * @param {{ pub:any, myId:string, watching:string|null, bubbles: Map<string,{id:string,seq:number}>, onWatch:(p:any)=>void,
  *   compact?: boolean, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean, left?: number|null } | null,
- *   cap?: number, uniteLocal?: Record<string, number> | null,
+ *   cap?: number, uniteLocal?: Record<string, number> | null, uniteField?: string | null,
  *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void } }} props
  *   uniteLocal: the local 联防 replica's per-leaker counts while it is on screen (battle runner state().uniteLeft), else null
+ *   uniteField: the field id of that replica (several 联防 fields: it speaks only for its own field's leakers)
+ *   compact: force the compact rows (they are used anyway for more than TEAM_FULL_ROWS players)
  */
-export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = false, observe = null, self: selfLive = null, cap = 10, uniteLocal = null }) {
+export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = false, observe = null, self: selfLive = null, cap = 10, uniteLocal: uniteShown = null, uniteField = null }) {
   const [openPid, setOpenPid] = useState(null);
+  const seats = useStore((s) => s.room?.seats);
   // the playerId whose avatar just called onWatch, so the other click of a double-click does not open the view again
   const askedAt = useRef(/** @type {{ id: string|null, at: number }} */ ({ id: null, at: 0 }));
   const phaseKey = `${pub?.phase}:${pub?.round}`;
   useEffect(() => { setOpenPid(null); }, [phaseKey, watching, observe?.observing]);
   const players = sortedPlayers(pub);
   if (!players.length) return null;
+  compact = compact || teamCompact(players.length);
   // a boss round: the viewer's pair framed in green from the round's start (item 51 — the official bg_team_border,
   // tinted like the official green; a plain green ring without the local art)
   const team = teamFrameIds(pub, myId);
@@ -166,8 +194,12 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
       const open = !!observe && openPid === p.playerId && !self;
       const back = !!observe && self && observe.observing;
       const title = observe ? (self ? (observe.observing ? t('返回战场') : t('你自己')) : t('查看 {name} 的战场', { name: p.name })) : (self ? t('查看自己的阵地') : t('查看 {name} 的阵地', { name: p.name }));
+      // the replica on screen counts this leaker only when its enemies fight there (one 联防 field: always)
+      const uniteLocal = uniteLocalFor(pub, uniteShown, uniteField, p.playerId);
       const lp = rowLp(p, pub, self ? selfLive : null, { uniteLocal, cap });
       const inTeam = team.has(p.playerId);
+      const level = Number.isInteger(p.shopLevel) && p.shopLevel > 0 ? p.shopLevel : null;
+      const levelTip = level == null ? null : `${t('调度中心')} · LV ${level}`;
       return html`<div key=${p.playerId} class=${cx('team__row', self && 'is-self', inTeam && 'is-team', watched && 'is-watched', p.alive === false && 'is-dead', open && 'is-open')}>
         <button type="button" class="team__btn" onClick=${() => click(p, self)} onDblClick=${(e) => dblClick(e, p, self)} title=${inTeam && !self ? `${title} · ${t('与你在同一战场')}` : title} aria-expanded=${observe && !self ? String(open) : undefined}>
           <${PlayerAvatar} player=${p} self=${self} />
@@ -176,8 +208,19 @@ export function TeamPanel({ pub, myId, watching, bubbles, onWatch, compact = fal
           ${p.isBot ? html`<span class="team__ai">AI</span>` : null}
           ${self ? html`<span class="team__you"><${Icon} name="user" /></span>` : null}
         </button>
+        ${level != null ? html`<${Tooltip} text=${levelTip} placement="right" class="team__level-tip">
+          <span class="team__level" role="img" aria-label=${levelTip}
+              style=${`--level-color:var(--lv-${Math.min(level, 6)});--level-accent:var(--tier-${Math.min(level, 6)})`}>
+            <span class="team__level-label" aria-hidden="true">LV</span>
+            <b class="team__level-num num" aria-hidden="true">${level}</b>
+          </span>
+        <//>` : null}
         <div class="team__info">
-          <span class="team__name">${p.name || t('博士')}</span>
+          <span class="team__top">
+            ${bandTagShown(p, Array.isArray(seats) ? seats.find((x) => x && x.playerId === p.playerId)?.avatarUrl : null)
+              ? html`<${BandIcon} bandId=${p.bandId} size="sm" class="team__band" />` : null}
+            <span class="team__name">${p.name || t('博士')}</span>
+          </span>
           <div class="team__line">
             <${LpTower} value=${lp.lp} size="sm" tone=${Number.isFinite(lp.lp) && lp.lp - lp.pending <= 5 ? 'danger' : null} pending=${lp.pending}
               tip=${rowLpTip(lp, cap)} />

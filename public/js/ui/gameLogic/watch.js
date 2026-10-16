@@ -1,7 +1,9 @@
 // ui/gameLogic/watch.js — field ids, the watch switcher, emote bubbles. Re-exported from ../gameLogic.js.
 
+import { PHASE } from '../../../../shared/constants.js';
 import { isObj, sortedPlayers } from './shared.js';
 import { isCombatPhase } from './phases.js';
+import { multiUnite, uniteFieldOf, uniteFieldNo } from '../../battle/observe.js';
 import { t } from '../../../../shared/i18n.js';
 
 
@@ -51,7 +53,9 @@ export function watchTarget(p, pub, myId) {
   if (!isObj(p)) return { reason: t('无效的目标') };
   if (p.alive === false) return { reason: t('该队友已被淘汰，无法查看其阵地') };
   const combat = isCombatPhase(pub?.phase);
-  const fieldId = (combat && typeof p.fieldId === 'string' && p.fieldId) || ownFieldId(p.playerId);
+  // several 联防 fields (more than 4 alive): a leaker's row watches the field holding its enemies
+  const leakerField = combat && pub?.phase === PHASE.UNITE && multiUnite(pub) && !(typeof p.fieldId === 'string' && p.fieldId) ? uniteFieldOf(pub, p.playerId) : null;
+  const fieldId = (combat && typeof p.fieldId === 'string' && p.fieldId) || leakerField || ownFieldId(p.playerId);
   if (combat) {
     const fields = Array.isArray(pub?.fields) ? pub.fields.filter(isObj) : [];
     const f = fields.find((x) => x.fieldId === fieldId);
@@ -92,7 +96,12 @@ export function fieldLabel(field, pub, myId) {
   if (!isObj(field)) return '—';
   const names = new Map(sortedPlayers(pub).map((p) => [p.playerId, p.name || t('博士')]));
   const ps = Array.isArray(field.players) ? field.players : [];
-  if (field.kind === 'unite') return ps.includes(myId) ? t('联防（自己）') : t('联防阵地');
+  if (field.kind === 'unite') {
+    if (ps.includes(myId)) return t('联防（自己）');
+    // several 联防 fields (more than 4 alive): numbered in field order — 联防阵地 1 ('u'), 联防阵地 2 ('u2') …
+    const no = uniteFieldNo(pub, field.fieldId);
+    return no ? t('联防阵地 {no}', { no }) : t('联防阵地');
+  }
   if (field.kind === 'boss' || field.kind === 'hidden') {
     if (ps.includes(myId)) return ps.length > 1 ? t('全景') : t('自己');
     return ps.map((id) => names.get(id) || t('博士')).join(' · ') || t('领袖战场');

@@ -2,6 +2,21 @@
 
 const CAMERA_MS = 750;
 
+/** Longest the view's startup waits for its optional parts (fonts, board art, the 3D board) — see createFieldView. */
+const STARTUP_WAIT_MS = 4000;
+
+/** Touch pinch on the field (see the pointer handlers): the deepest zoom, the pan's reach past the framing, a tap's slop. */
+const USER_ZOOM_MAX = 3;
+const USER_PAN_SLACK = 0.3;
+const TAP_SLOP_PX = 12;
+
+/**
+ * Game seconds the battle is drawn behind the simulation (render/interp.js lookAhead): enough for the whole wind-up of
+ * 99% of the attack clips and for Texas' Attack_Start + strike (0.97 s). In GAME time so it holds at every battle /
+ * replay speed; at the live 2× it is 0.5 s real (renderLag()).
+ */
+export const LOOK_AHEAD = 1.0;
+
 /** Camera pan to / from the enemy preview pen (configBlackBoard move_time 0.25). */
 export const PEN_CAMERA_MS = 250;
 
@@ -47,4 +62,4 @@ export const DRAG_HOLD_TILES = 0.45;
  */
 export const DEPLOY_REPLAY_MS = 50;
 
-export { CAMERA_MS, BOARD3D_RETRY_MS, BOARD3D_STABLE_MS, RANGE_GROUPS, CHAIN_KINDS, DROP_PENDING_MS };
+export { CAMERA_MS, BOARD3D_RETRY_MS, BOARD3D_STABLE_MS, RANGE_GROUPS, CHAIN_KINDS, DROP_PENDING_MS, STARTUP_WAIT_MS, USER_ZOOM_MAX, USER_PAN_SLACK, TAP_SLOP_PX };

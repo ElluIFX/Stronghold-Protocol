@@ -1,5 +1,6 @@
 // ui/gameLogic/draft.js — 机变 and band-draft normalisation. Re-exported from ../gameLogic.js.
 
+import { SP_CARDS_MAX } from '../../../../shared/protocol.js';
 import { isObj } from './shared.js';
 import { PHASE } from '../../../../shared/constants.js';
 import { t } from '../../../../shared/i18n.js';
@@ -39,7 +40,8 @@ export function normalizeDraft(draft, players = []) {
 
 /**
  * Normalise m.public.sp ({family, cards, turn, picks, order?}).
- * Cards: string ids or objects; picks: {playerId: cardIdx} | [{playerId, idx}] | card.takenBy.
+ * Cards: string ids or objects, at most shared/protocol.js SP_CARDS_MAX (co-op max(6, alive + 2): 6 for 1–4 players,
+ * up to 10 for 8); picks: {playerId: cardIdx} | [{playerId, idx}] | card.takenBy.
  * @param {any} sp
  * @param {any[]} [players]
  */
@@ -47,7 +49,7 @@ export function normalizeSp(sp, players = []) {
   if (!isObj(sp)) return null;
   const ids = (Array.isArray(players) ? players : []).filter(isObj).map((p) => p.playerId);
   const order = Array.isArray(sp.order) && sp.order.length ? sp.order.filter((x) => typeof x === 'string') : ids;
-  const cards = (Array.isArray(sp.cards) ? sp.cards : []).slice(0, 6).map((c, idx) => {
+  const cards = (Array.isArray(sp.cards) ? sp.cards : []).slice(0, SP_CARDS_MAX).map((c, idx) => {
     const card = typeof c === 'string' ? { id: c } : isObj(c) ? { ...c } : {};
     return { ...card, idx, takenBy: typeof card.takenBy === 'string' ? card.takenBy : null };
   });
