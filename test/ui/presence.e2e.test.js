@@ -10,12 +10,13 @@
 // at least 10 px, with no overlap in the title footer or lobby top bar.
 // Every page must finish with zero console errors / page errors / failed requests. Screenshots: test/e2e/out/presence-*.png
 
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UI_CHROME as CHROME, UI_BROWSER_ARGS } from '../e2e/ui-browser.mjs';
+import { UI_CHROME as CHROME, UI_BROWSER_ARGS, cleanupUiBrowser } from '../e2e/ui-browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -33,17 +34,26 @@ describe('在线人数 readout (real server, headless Chrome)', { skip: !ENABLED
   let srv;
   let browser;
   let base;
+  let pluginsDir;
 
   before(async () => {
     const { startServer } = await import('../../server/index.js');
     const puppeteer = (await import('puppeteer-core')).default;
+    pluginsDir = mkdtempSync(path.join(tmpdir(), 'sp-presence-e2e-'));
     // a short presence tick: the push is then observable well inside the test's waits
-    srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, presenceTickMs: 300 });
+    srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, presenceTickMs: 300, pluginsDir });
     base = `http://127.0.0.1:${srv.port}`;
     browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: [...UI_BROWSER_ARGS] });
     mkdirSync(OUT, { recursive: true });
   });
-  after(async () => { await browser?.close(); await srv?.close(); });
+  after(async () => {
+    try { await browser?.close(); }
+    finally {
+      try { await srv?.close(); }
+      finally { if (pluginsDir) rmSync(pluginsDir, { recursive: true, force: true }); }
+    }
+  });
+  afterEach(() => cleanupUiBrowser(browser));
 
   /** Open a page: `entered: false` stays on the title screen, `true` goes straight to the lobby. */
   async function open({ entered = false, name = '在线测试', lang = null, device = null } = {}) {
@@ -60,7 +70,7 @@ describe('在线人数 readout (real server, headless Chrome)', { skip: !ENABLED
       localStorage.setItem('sp.name', who);
       if (enter) sessionStorage.setItem('sp.entered', '1');
     }, entered, name);
-    await page.goto(`${base}/${lang ? `?lang=${lang}` : ''}`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${base}/${lang ? `?lang=${lang}` : ''}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     // `connected` is the title screen's socket (no hello yet); `online` means the session was welcomed
     await page.waitForFunction(() => ['connected', 'online'].includes(globalThis.__SP__?.store.get().connection.status), { timeout: 30000 });
     await page.waitForSelector(entered ? '[data-testid="lobby-presence"]' : '[data-testid="title-presence"]', { visible: true, timeout: 15000 });

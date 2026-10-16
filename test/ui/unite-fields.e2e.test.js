@@ -1,12 +1,12 @@
 // Sequential joint-defense UI: only the active field is observable; all leakers follow it into the next stage.
 // The mock can construct either stage with ?uniteStage=1|2 and advances a timeout through advanceUniteStage().
 // Opt-in: SP_E2E=1 node --test --test-concurrency=1 test/ui/unite-fields.e2e.test.js
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UI_CHROME as CHROME, UI_BROWSER_ARGS } from '../e2e/ui-browser.mjs';
+import { UI_CHROME as CHROME, UI_BROWSER_ARGS, cleanupUiBrowser } from '../e2e/ui-browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -26,6 +26,8 @@ describe('sequential joint-defense fields (UI mock, headless Chrome)', { skip: !
   });
   after(async () => { await browser?.close(); await server?.close(); });
 
+  afterEach(() => cleanupUiBrowser(browser));
+
   async function open(viewport, stage, client) {
     const [width, height, touch] = VIEWPORTS[viewport];
     const page = await browser.newPage();
@@ -35,10 +37,11 @@ describe('sequential joint-defense fields (UI mock, headless Chrome)', { skip: !
     page.on('console', message => {
       if (message.type() === 'error' && !/Failed to load resource/.test(message.text())) problems.push(message.text());
     });
-    await page.goto(`${server.url}/dev/game-mock.html?shot=1&render=fallback&players=8&phase=UNITE&variant=leaker&uniteStage=${stage}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${server.url}/dev/game-mock.html?shot=1&render=fallback&players=8&phase=UNITE&variant=leaker&uniteStage=${stage}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForSelector('.team__row', { timeout: 20000 });
     if (client) await page.evaluate(() => globalThis.__MOCK__.mutate(state => { state.pub.combatMode = 'client'; }));
     await page.waitForFunction(fieldId => globalThis.__MOCK__?.store.get().match.field?.fieldId === fieldId, {}, stage === 1 ? 'u' : 'u2');
+    await page.evaluate(() => document.fonts.ready);
     return { page, problems };
   }
 

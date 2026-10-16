@@ -277,8 +277,8 @@
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: .3rem;
-  height: 1.5rem;
-  padding: 0 .6rem;
+  min-height: 1.5rem;
+  padding: .12rem .6rem;
   background: linear-gradient(0deg, rgba(7, 9, 8, .96), rgba(10, 13, 12, .7));
   border-top: 1px solid var(--line);
 }

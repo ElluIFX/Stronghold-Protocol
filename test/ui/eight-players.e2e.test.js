@@ -20,12 +20,12 @@
 // a 5-player room: 7 cards in a 4 × 2 grid, the Final Assault's lone 5th player on b3; and the default 4-player mock
 // keeps the official layouts (none of the compact / dense / wide classes). Screenshots: test/e2e/out/p8-*.png.
 
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UI_CHROME as CHROME, UI_BROWSER_ARGS } from '../e2e/ui-browser.mjs';
+import { UI_CHROME as CHROME, UI_BROWSER_ARGS, cleanupUiBrowser } from '../e2e/ui-browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -54,6 +54,8 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
     await srv?.close();
   });
 
+  afterEach(() => cleanupUiBrowser(browser));
+
   async function open(vp, query) {
     const [w, h, touch] = VIEWPORTS[vp];
     const page = await browser.newPage();
@@ -61,7 +63,7 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
     const problems = [];
     page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) problems.push(`console: ${m.text()}`); });
-    await page.goto(`${base}/dev/game-mock.html?shot=1&render=fallback&${query}`, { waitUntil: 'networkidle0' });
+    await page.goto(`${base}/dev/game-mock.html?shot=1&render=fallback&${query}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)'), { timeout: 20000 });
     await page.evaluate(() => document.fonts.ready);
     await sleep(1200);
@@ -329,8 +331,10 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
     await page.close();
   });
 
-  test('the host\'s room bar with 8 humans seated (real server): the difficulty labels stay on one line, the pickers clear of the ready row', { timeout: 3 * 60 * 1000 }, async () => {
+  test('the host\'s room bar with 8 humans seated (real server): the difficulty labels stay on one line, the pickers clear of the ready row', { timeout: 3 * 60 * 1000 }, async (t) => {
     const { TestClient } = await import('../helpers/wsClient.js');
+    const connectedGuests = new Set();
+    t.after(async () => { await Promise.all([...connectedGuests].map(guest => guest.terminate())); });
     for (const vp of Object.keys(VIEWPORTS)) {
       for (const humans of [4, 8]) {
         const [w, h, touch] = VIEWPORTS[vp];
@@ -339,7 +343,7 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
         await page.setViewport({ width: w, height: h, deviceScaleFactor: 1, isMobile: touch, hasTouch: touch, isLandscape: true });
         const problems = [];
         page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
-        await page.goto(`${base}/`, { waitUntil: 'networkidle0' });
+        await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
         await page.waitForFunction(() => !!document.querySelector('.screen:not(.gload)'), { timeout: 20000 });
         const click = async (sel, text) => {
           const ok = await page.evaluate((s, t) => {
@@ -362,6 +366,7 @@ describe('rooms of 5–8 players (mock harness, headless Chrome)', { skip: !ENAB
         const guests = [];
         for (let i = 1; i < humans; i++) {
           const g = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+          connectedGuests.add(g);
           await g.hello(`客人${i}`);
           const r = await g.request({ t: 'room.join', code });
           assert.equal(r.t, 'ok', JSON.stringify(r));

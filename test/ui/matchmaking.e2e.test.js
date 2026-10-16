@@ -7,12 +7,12 @@
 // room starts; the test waits for that instead of shortening it.
 // Every page must finish with zero console errors / page errors / failed requests. Screenshots: test/e2e/out/queue-*.png
 
-import { test, describe, before, after } from 'node:test';
+import { test, describe, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UI_CHROME as CHROME, UI_BROWSER_ARGS } from '../e2e/ui-browser.mjs';
+import { UI_CHROME as CHROME, UI_BROWSER_ARGS, cleanupUiBrowser } from '../e2e/ui-browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = path.join(ROOT, 'test/e2e/out');
@@ -37,6 +37,7 @@ describe('matchmaking (匹配, real server + headless Chrome)', { skip: !ENABLED
     mkdirSync(OUT, { recursive: true });
   });
   after(async () => { await browser?.close(); await srv?.close(); });
+  afterEach(() => cleanupUiBrowser(browser));
 
   async function open() {
     const ctx = await browser.createBrowserContext();
@@ -51,7 +52,7 @@ describe('matchmaking (匹配, real server + headless Chrome)', { skip: !ENABLED
       localStorage.setItem('sp.name', '匹配测试');
       sessionStorage.setItem('sp.entered', '1');
     });
-    await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online' && !!document.querySelector('.lobby-screen'), { timeout: 30000 });
     return { ctx, page, problems };
   }
