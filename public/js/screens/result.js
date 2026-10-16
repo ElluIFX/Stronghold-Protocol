@@ -15,7 +15,7 @@
 //                 stats: { dmgDealt, kills, leaks, gold /* funds SPENT */, refreshes, merges, bossDamage?, itemsEquipped?,
 //                          activatedLayers?, lpLost?, perfectRounds? } }] }
 
-import { useEffect } from '../../vendor/hooks.module.js';
+import { useEffect, useRef } from '../../vendor/hooks.module.js';
 import { html, Button, Icon, MicroLabel, DifficultyTag } from '../ui/components.js';
 import { useGameData, Img, UnitThumb, BandIcon, PlayerAvatar, BondGlyph, LpTower, Sprite } from '../ui/gameComponents.js';
 import { normalizeResult, fmtNum, diyRecordFor, cardStandIn, standInForText } from '../ui/gameLogic.js';
@@ -64,7 +64,7 @@ export function LineupThumb({ u, gd }) {
     title=${si ? t('{name}（{note}）', { name: si.name, note: standInForText(chess.name) }) : undefined} />`;
 }
 
-function PlayerCard({ p, myId, titles, best, solo = false }) {
+export function PlayerCard({ p, myId, titles, best, solo = false }) {
   const gd = useGameData();
   const titleRec = p.title ? titles.find((x) => x.id === p.title.id) || null : null;
   // (the server sends the title's Chinese name: the localized config.titles record when it is that record's)
@@ -132,7 +132,14 @@ export function ResultView({ res, pub = null, myId = null, backLabel, onBack, qu
     for (const p of r.players) if (Number.isFinite(p.stats[k]) && p.stats[k] > 0 && (top == null || p.stats[k] > top.v)) top = { v: p.stats[k], id: p.playerId };
     if (top && r.players.length > 1) best[k] = top.id;
   }
-  useEffect(() => { if (!quiet) audio.sfx(r.victory ? 'settlementSucceed' : 'settlementFail'); }, []);
+  // once m.result is here: the server sends m.public (phase RESULT, which mounts this screen) before m.result, so the
+  // first render has no result yet and would always read as a defeat (the end line follows m.result: js/audio.js)
+  const settled = useRef(false);
+  useEffect(() => {
+    if (!res || settled.current) return;
+    settled.current = true;
+    if (!quiet) audio.sfx(r.victory ? 'settlementSucceed' : 'settlementFail');
+  }, [res]);
   const boss = r.bossId ? gd.boss(r.bossId) : null;
   // the Hidden Core medal (and its corrupted leader) only once R15 was actually fought
   const hidden = r.hiddenBossId && r.hiddenReached ? gd.boss(r.hiddenBossId) : null;

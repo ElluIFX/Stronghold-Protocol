@@ -156,11 +156,11 @@ import { loadThree, loadBoardPack, loadScenePack, webgl2Available, boardArtListe
 import { BoardScene } from './board3d/scene.js';
 import { layoutPen, penSignature } from './pen.js';
 import { IDENTITY, bossPrepField, tilesToDisp, leaderStand } from './prepfield.js';
-import { pickOnTile, pickBattle, hitTiles } from './pick.js';
+import { pickOnTile, pickBattle, hitTiles, pickBody } from './pick.js';
 import { promotionsOf } from './promote.js';
 import { ensurePixi } from './app/pixi.js';
 import { pieceDirOf, pickUnitOf } from './app/pick.js';
-import { CAMERA_MS, BOARD3D_STABLE_MS, BOARD3D_RETRY_MS, PEN_CAMERA_MS, RANGE_GROUPS, LEADER_HIT_STYLE, DRAG_HOLD_TILES, CHAIN_KINDS, DROP_PENDING_MS, DEPLOY_REPLAY_MS } from './app/tune.js';
+import { CAMERA_MS, BOARD3D_STABLE_MS, BOARD3D_RETRY_MS, PEN_CAMERA_MS, RANGE_GROUPS, LEADER_HIT_STYLE, DRAG_HOLD_TILES, CHAIN_KINDS, DROP_PENDING_MS, DEPLOY_REPLAY_MS, STARTUP_WAIT_MS, USER_ZOOM_MAX, USER_PAN_SLACK, TAP_SLOP_PX } from './app/tune.js';
 import { boardPreference, switchableBox, bandFor, fieldRows, boardArea, viewKind, restView, flightView } from './app/view.js';
 import { renderInfo, FORCED_EXIT, showsDeathFx } from './app/info.js';
 import { resolveAssets, makeData, withTimeout, QUALITY_RES, BOARD_RES, releaseGl } from './app/host.js';
@@ -189,6 +189,12 @@ export async function createFieldView(host, options = {}) {
   signal?.throwIfAborted();
   const P = await withTimeout(ensurePixi(), null, signal);
   signal?.throwIfAborted();
+  // the optional waits below (asset manifest, fonts, board art, the 3D board) share one budget: they only spare the
+  // first frame a late swap — each upgrades in place when it lands — and on a slow phone link their sum (14 s) ran
+  // past ui/fieldHost.js's engine timeout, which then gave the whole match to the flat DOM board (user report
+  // 2026-10-06: "整个棋盘位于中间位置，缩放过小")
+  const waitUntil = performance.now() + STARTUP_WAIT_MS;
+  const waitFor = (ms) => Math.max(0, Math.min(ms, waitUntil - performance.now()));
   const assets = resolveAssets(opts.assets);
   const data = makeData(opts.data);
   const settings = { damageNumbers: true, officialDamageNumbers: false, ammoCount: false, mysticEnergy: false, quality: 'high', officialFx: 'auto', ...(opts.settings || {}) };
@@ -202,10 +208,10 @@ export async function createFieldView(host, options = {}) {
   // the manifest, and the optional local-art manifest in parallel: unit views pick an enemy's local-client model by it
   // (assets.js spineEntry, DESIGN §13 — 灼热源石虫 / 炽焰源石虫); absent or slow, they draw the web models
   await withTimeout(Promise.all([assets.ready ? assets.ready() : null, assets.local ? assets.local() : null]
-    .map((p) => Promise.resolve(p).catch(() => {}))), 4000, signal);
+    .map((p) => Promise.resolve(p).catch(() => {}))), waitFor(4000), signal);
   signal?.throwIfAborted();
   // web fonts for the bitmap damage numbers / tier chips (never block long)
-  try { if (document.fonts?.load) await withTimeout(Promise.all([document.fonts.load('700 40px Bender'), document.fonts.load('700 40px Oxanium')]), 1500, signal); } catch { /* optional fonts */ }
+  try { if (document.fonts?.load) await withTimeout(Promise.all([document.fonts.load('700 40px Bender'), document.fonts.load('700 40px Oxanium')]), waitFor(1500), signal); } catch { /* optional fonts */ }
   signal?.throwIfAborted();
 
   const size = () => ({ width: Math.max(1, host.clientWidth || 1), height: Math.max(1, host.clientHeight || 1) });
@@ -303,6 +309,11 @@ export async function createFieldView(host, options = {}) {
   let stageRec = null;
   let cam = presetCamera('prep', { width: s0.width, height: s0.height, padding: defaultPadding('prep', s0) }, { hud: hudBands('prep', s0) });
   let camFrom = null, camTo = null, camT0 = 0, camKind = 'prep', camOpts = {}, camMs = CAMERA_MS;
+  // the player's pinch zoom / pan on a touch screen: an image transform of `userBase` (the camera when the gesture
+  // began) — screen' = z·screen + (ox, oy), i.e. the focal length × z and the principal point moved (the same 2D
+  // transform as projection.js clearHud), so picking, the three.js board and every layer stay consistent. A new
+  // camera request (setCamera, a resize) drops it.
+  let userBase = null, userZ = 1, userOx = 0, userOy = 0;
   let pendingView = null;     // tile band/focus to apply when the camera transition ends
   const views = new Map();    // key → view (prep: 'p:'+uid; battle: unit id)
   let prepPieces = [];        // { uid, piece, area, idx, row, col, key }
@@ -622,6 +633,7 @@ export async function createFieldView(host, options = {}) {
     }
     camKind = nextKind;
     camOpts = { ...o };
+    userBase = null; userZ = 1; userOx = userOy = 0;
     // the field actually shown (a 'prep' camera on the boss rows is the Final Assault prep: boss field built / drawn)
     const vk = viewKind(camKind, camOpts);
     if (vk === 'prep') setPrepField(IDENTITY);
@@ -786,10 +798,22 @@ export async function createFieldView(host, options = {}) {
   }
   /** The tile under a canvas point in BOARD space (null off-grid; an impossible tile off the player's half). */
   function pickBoardTile(x, y) {
-    const t = pickTile(cam, x, y, heightAt, tiles.levels);
+    return boardTileOf(pickTile(cam, x, y, heightAt, tiles.levels));
+  }
+  /** A display tile in BOARD space (the prep field transform undone; an impossible tile off the player's half). */
+  function boardTileOf(t) {
     if (!t || prepXf === IDENTITY) return t;
     const b = prepXf.toBoard(t.row, t.col);
     return b ? { ...t, row: b.row, col: b.col } : { row: -1, col: -1, x: t.x, y: t.y };
+  }
+  /**
+   * Whether the board layer on screen draws display tile (row, col): the 3D island's built tiles (board3d/layout.js
+   * classifyStage `drawn`: this view's areas — the own field r6–13 × c0–10 in prep and battle — and the ring around
+   * them), else the 2D TileField's (tiles.js parseStage `drawn`: the view's rows, the dim margin included).
+   */
+  function tileDrawn(row, col) {
+    const g = board3d?.board?.grid || tiles.grid;
+    return !!g?.[row]?.[col]?.drawn;
   }
 
   function slotWorld(p) {
@@ -1158,6 +1182,11 @@ export async function createFieldView(host, options = {}) {
   }
 
   /** The prep piece under a canvas point: the one on the tile under it (render/pick.js; board, bench and temp rows). */
+  /** A press of a finger is being resolved (render/pick.js pickBody: an empty tile picks the body drawn over it). */
+  let touchPress = false;
+  /** The standing units as pickBody candidates (their drawn bodies). */
+  const drawnBodies = (units) => units.filter((u) => u.drawn).map((u) => ({ ...u, body: u.drawn }));
+
   function pieceAt(x, y) {
     if (mode !== 'prep') return null;
     const units = [];
@@ -1165,7 +1194,7 @@ export async function createFieldView(host, options = {}) {
       const u = pickUnitOf(views.get(e.key));
       if (u) { u.entry = e; units.push(u); }
     }
-    const best = pickOnTile(units, groundTile(x, y))?.entry;
+    const best = pickOnTile(units, groundTile(x, y))?.entry || (touchPress ? pickBody(drawnBodies(units), x, y)?.entry : null);
     if (!best) return null;
     return { uid: best.uid, kind: best.piece.kind, id: best.piece.id, area: best.area, idx: best.idx, row: best.row, col: best.col, piece: best.piece, draggable: true };
   }
@@ -1346,7 +1375,7 @@ export async function createFieldView(host, options = {}) {
       const u = pickUnitOf(v, enemy, enemy ? data.enemy(v.info.defId)?.hitArea ?? null : null);
       if (u) units.push(u);
     }
-    const hit = pickBattle(units, groundTile(x, y), x, y);
+    const hit = pickBattle(units, groundTile(x, y), x, y) || (touchPress ? pickBody(drawnBodies(units), x, y) : null);
     return hit ? hit.ref : null;
   }
 
@@ -1358,31 +1387,120 @@ export async function createFieldView(host, options = {}) {
    * PREP the board draws the boss field's own rows (stage 2–5 as board 9–12), and the screen maps board → stage once more
    * with `gameLogic.fieldTile` — reporting the DRAWN tile here would be converted twice and explain the wrong tile
    * (review on #185).
+   * A BATTLE field (a fight, a teammate's scouted board, a spectated one, a 联防 field) draws the stage's own rows and
+   * reports the drawn tile: `prepXf` is not reset when the camera leaves the boss-field prep (setCamera only sets it for
+   * 'prep' / 'bossPrep'), so a boss round's battle — or a teammate's boss field scouted from the own boss-field prep —
+   * would otherwise convert a stage tile as if it were a prep board tile.
+   * A mouse explains the tile on press; a finger at its release, when it stayed a tap (`touchTap` below): the first finger
+   * of a pinch and a one-finger swipe explain nothing.
+   * Only a tile the board on screen DRAWS explains itself (`tileDrawn`, checked on the drawn tile before the board-space
+   * conversion): the picking grid is the whole 19×21 stage, and every stage has a 传送入口 at (8,11), right of the temp
+   * row — on the 3D board that is the empty background beside the island, where a press opened a card about nothing
+   * visible (review of this fork's merge of #185; the teammate's half, cols 11–20, likewise). The 2D board draws those
+   * tiles as its dim margin, so there they still explain themselves.
    */
   function emitTileClick(ev, e) {
-    const t = pickBoardTile(ev.x, ev.y);
+    const d = groundTile(ev.x, ev.y);
+    if (!d || !tileDrawn(d.row, d.col)) return;          // off the grid, or a tile this view does not draw
+    const t = mode === 'battle' ? d : boardTileOf(d);
     if (!t || !(t.row >= 0) || !(t.col >= 0)) return;    // outside the board this field draws
     emit('tileClick', { row: t.row, col: t.col, button: e.button, clientX: e.clientX, clientY: e.clientY });
+  }
+
+  // ---- touch: pinch zoom / two-finger pan (user report: on a phone the pieces were too small to tap) -------------
+  // One finger keeps every existing gesture (tap, long press, drag). A second finger on the field starts a pinch of that
+  // pair of fingers: an ongoing piece drag is cancelled (the piece goes home); a third finger is ignored, the pinch ends
+  // when one of its two lifts, and no finger counts again — no new pinch either — until all have lifted. Zoom
+  // USER_ZOOM_MAX× at most, never below the camera's own framing; the pan may pull the board up to USER_PAN_SLACK of
+  // the viewport past its framing (out from under the HUD). In battle a touch picks a unit on release (a tap), so the
+  // first finger of a pinch selects nothing; a finger on the empty prep ground explains its tile at release the same way
+  // (the prep press itself stays drag-first: a piece, the boss leader or a pen figure under the finger takes it at once).
+  const touches = new Map();  // pointerId → canvas point, fingers on the field
+  let pinch = null;           // { a, b (its two pointerIds), d0, mx0, my0, z0, ox0, oy0 } while both are down
+  let gestured = false;       // a pinch happened: ignore the fingers until all have lifted
+  // a touch waiting for its release, in the mode it went down in: a battle press (battlePress — a unit, the leader / a pen
+  // figure, else the tile) or a press on the empty prep ground (emitTileClick)
+  let touchTap = null;        // { pointerId, x, y, mode, e }
+  const holdTap = (e, ev) => { touchTap = { pointerId: e.pointerId, x: ev.x, y: ev.y, mode, e: { button: e.button, clientX: e.clientX, clientY: e.clientY } }; };
+
+  function userCam() {
+    const c = userBase.clone();
+    c.scale = userBase.scale * userZ;
+    c.cx = userZ * userBase.cx + userOx;
+    c.cy = userZ * userBase.cy + userOy;
+    return c.update();
+  }
+
+  /** Distance and midpoint of the pinch's two fingers (pointerIds `a`, `b`). */
+  function fingers(a, b) {
+    const p = touches.get(a), q = touches.get(b);
+    return { d: Math.max(1, Math.hypot(q.x - p.x, q.y - p.y)), mx: (p.x + q.x) / 2, my: (p.y + q.y) / 2 };
+  }
+
+  function startPinch(a, b) {
+    drag.pointerCancel(null);  // a piece being pressed / dragged goes home (pieceDragEnd → endDragVisual)
+    touchTap = null;           // the first finger was no tap: it picks nothing and explains no tile
+    if (camTo) stepCamera(camT0 + camMs + 1); // a camera still flying lands first
+    if (!userBase) { userBase = cam; userZ = 1; userOx = userOy = 0; }
+    const f = fingers(a, b);
+    pinch = { a, b, d0: f.d, mx0: f.mx, my0: f.my, z0: userZ, ox0: userOx, oy0: userOy };
+    gestured = true;
+  }
+
+  function movePinch() {
+    if (!pinch || !userBase || camTo || !touches.has(pinch.a) || !touches.has(pinch.b)) return;
+    const f = fingers(pinch.a, pinch.b);
+    const W = vp.width, H = vp.height;
+    const z = Math.max(1, Math.min(USER_ZOOM_MAX, pinch.z0 * f.d / pinch.d0));
+    // the base-camera point under the fingers' first midpoint stays under their midpoint
+    const sx = (pinch.mx0 - pinch.ox0) / pinch.z0, sy = (pinch.my0 - pinch.oy0) / pinch.z0;
+    const slX = W * USER_PAN_SLACK, slY = H * USER_PAN_SLACK;
+    userZ = z;
+    userOx = Math.max(W - z * W - slX, Math.min(slX, f.mx - z * sx));
+    userOy = Math.max(H - z * H - slY, Math.min(slY, f.my - z * sy));
+    cam = userCam();
+  }
+
+  /**
+   * A press on the battle view (a mouse's press, a finger's tap at its release): a unit opens its card, else a scouting
+   * board's leader or pen figure under the point; nothing there → the ground itself explains its tile (emitTileClick).
+   */
+  function battlePress(ev, e) {
+    const v = battleUnitAt(ev.x, ev.y);
+    if (v) {
+      const info = infos.get(v.id) || v.info;
+      const payload = { unitId: v.id, uid: info?.uid ?? null, unit: info, button: e.button, detail: e.button === 2, clientX: e.clientX, clientY: e.clientY };
+      emit('pieceClick', payload);
+      if (e.button === 2) emit('pieceDetail', payload);
+      return;
+    }
+    // a scouting board: the round's leader on its boss field, the pen's figures; nothing there → the ground itself
+    const pv = (leader ? leaderAt(ev.x, ev.y) : null) || (penViews.size ? penUnitAt(ev.x, ev.y) : null);
+    if (pv) emitPenClick(pv, e);
+    else emitTileClick(ev, e);
   }
 
   const onPointerDown = (e) => {
     if (destroyed) return;
     const ev = evPayload(e);
-    if (mode === 'battle') {
-      const v = battleUnitAt(ev.x, ev.y);
-      if (v) {
-        const info = infos.get(v.id) || v.info;
-        const payload = { unitId: v.id, uid: info?.uid ?? null, unit: info, button: e.button, detail: e.button === 2, clientX: e.clientX, clientY: e.clientY };
-        emit('pieceClick', payload);
-        if (e.button === 2) emit('pieceDetail', payload);
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, { x: ev.x, y: ev.y });
+      if (gestured) return;          // a pinch ran: no finger counts (no new pinch) until all have lifted
+      if (touches.size >= 2) {
+        const [a, b] = touches.keys(); // the finger already down and this one
+        startPinch(a, b);
         return;
       }
-      const pv = penViews.size ? penUnitAt(ev.x, ev.y) : null;
-      if (pv) emitPenClick(pv, e);
-      else emitTileClick(ev, e);
+    }
+    if (mode === 'battle') {
+      if (e.pointerType === 'touch') { holdTap(e, ev); return; }
+      battlePress(ev, e);
       return;
     }
-    if (drag.pointerDown(ev)) { try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ } return; }
+    touchPress = e.pointerType === 'touch';
+    let pressed;
+    try { pressed = drag.pointerDown(ev); } finally { touchPress = false; }
+    if (pressed) { try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ } return; }
     const mapChar = mapCharAt(ev.x, ev.y);
     if (mapChar) {
       emit('pieceClick', { unit: mapChar, unitId: null, uid: mapChar.uid, prepMapChar: true,
@@ -1394,11 +1512,18 @@ export async function createFieldView(host, options = {}) {
       const pv = penUnitAt(ev.x, ev.y);
       if (pv) { emitPenClick(pv, e); return; }
     }
-    emitTileClick(ev, e);
+    // nothing took the press: the ground itself — a finger explains the tile at its release, if it stays a tap
+    if (e.pointerType === 'touch') holdTap(e, ev);
+    else emitTileClick(ev, e);
   };
   const onPointerMove = (e) => {
     if (destroyed) return;
     const ev = evPayload(e);
+    if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+      touches.set(e.pointerId, { x: ev.x, y: ev.y });
+      if (gestured) { if (pinch && (e.pointerId === pinch.a || e.pointerId === pinch.b)) movePinch(); return; }
+      if (touchTap && touchTap.pointerId === e.pointerId && Math.hypot(ev.x - touchTap.x, ev.y - touchTap.y) > TAP_SLOP_PX) touchTap = null;
+    }
     if (mode === 'battle') {
       if (e.pointerType === 'touch') return;
       const v = battleUnitAt(ev.x, ev.y);
@@ -1411,8 +1536,40 @@ export async function createFieldView(host, options = {}) {
     }
     drag.pointerMove(ev);
   };
-  const onPointerUp = (e) => { if (!destroyed && mode !== 'battle') drag.pointerUp(evPayload(e)); try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ } };
-  const onPointerCancel = (e) => { if (!destroyed) drag.pointerCancel(evPayload(e)); };
+  /** A finger lifted (or was cancelled): true when it belonged to a pinch and must not reach the other handlers. */
+  function liftTouch(e) {
+    if (e.pointerType !== 'touch' || !touches.has(e.pointerId)) return false;
+    touches.delete(e.pointerId);
+    if (pinch && (e.pointerId === pinch.a || e.pointerId === pinch.b)) pinch = null;
+    const was = gestured;
+    if (!touches.size) gestured = false;
+    return was;
+  }
+  const onPointerUp = (e) => {
+    if (!destroyed && !liftTouch(e)) {
+      const up = evPayload(e);
+      const t = touchTap && touchTap.pointerId === e.pointerId ? touchTap : null;
+      if (t) touchTap = null;
+      // a tap: released within TAP_SLOP_PX of where it went down (the last move may not have come as a pointermove), in
+      // the mode it went down in (a field that switched to / from battle meanwhile takes no stale tap)
+      const tap = !!t && t.mode === mode && Math.hypot(up.x - t.x, up.y - t.y) <= TAP_SLOP_PX;
+      if (mode === 'battle') {
+        if (tap) {
+          touchPress = true;
+          try { battlePress({ x: t.x, y: t.y }, t.e); } finally { touchPress = false; }
+        }
+      } else {
+        drag.pointerUp(up);
+        if (tap) emitTileClick({ x: t.x, y: t.y }, t.e);   // the empty prep ground (nothing took the press)
+      }
+    }
+    try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+  const onPointerCancel = (e) => {
+    if (destroyed) return;
+    if (touchTap && touchTap.pointerId === e.pointerId) touchTap = null;
+    if (!liftTouch(e)) drag.pointerCancel(evPayload(e));
+  };
   const onPointerLeave = (e) => { if (!destroyed && !drag.dragging) drag.pointerLeave(evPayload(e)); if (hoverUnit) { hoverUnit = null; emit('pieceHover', { uid: null, unitId: null }); } };
   const onContext = (e) => e.preventDefault();
   // A finger is handled through the pointer events above only. The compatibility mouse events + click of a tap come
@@ -1971,6 +2128,7 @@ export async function createFieldView(host, options = {}) {
     board3d?.resize(sz.width, sz.height, boardDpr());
     layoutBackdrop();
     const target = targetCamera(camKind, camOpts);
+    userBase = null; userZ = 1; userOx = userOy = 0;
     if (camTo) camTo = target; else cam = target;
     tiles.project(cam, true);
   }
@@ -2201,8 +2359,8 @@ export async function createFieldView(host, options = {}) {
   onAbort = () => view.destroy();
   signal?.addEventListener('abort', onAbort, { once: true });
   signal?.throwIfAborted();
-  await withTimeout(artPromise, 2500, signal);
-  if (want3d) await withTimeout(boardReady, 6000, signal);
+  await withTimeout(artPromise, waitFor(2500), signal);
+  if (want3d) await withTimeout(boardReady, waitFor(6000), signal);
   signal?.throwIfAborted();
   return view;
   } catch (err) {

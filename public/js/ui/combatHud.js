@@ -13,7 +13,7 @@
 //   Server-run combat (legacy streaming mode): the ‹ 自己 › switcher cycling the live fields of m.public.fields (several
 //   联防 fields read 联防阵地 1 / 2 …, gameLogic fieldLabel).
 
-import { html, Icon, PlayerName } from './components.js';
+import { html, Icon } from './components.js';
 import { DpCounter } from './hud.js';
 import { GIcon } from './gameComponents.js';
 import { switcherLabel, cycleField, fieldLabel } from './gameLogic.js';
@@ -30,7 +30,7 @@ function ProgressList({ list }) {
   if (!Array.isArray(list) || !list.length) return null;
   return html`<div class=${cx('chud__progress', progressDense(list.length) && 'chud__progress--dense')} role="list" aria-label=${t('队友作战进度')}>
     ${list.map((p) => html`<span key=${p.playerId} role="listitem" class=${cx('chud__prog', p.done && 'is-done')}>
-      <b><${PlayerName} name=${p.name} /></b>
+      <b>${p.name}</b>
       ${p.done
         ? html`<span class="chud__prog__ok" aria-label=${t('作战结束')}>✓</span>`
         : html`<span class="num">${(p.resolved ?? p.killed) != null && p.total != null ? `${p.resolved ?? p.killed}/${p.total}` : '•••'}</span>`}

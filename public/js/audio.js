@@ -624,6 +624,7 @@ export class AudioManager {
    * unlocks output after something was started in a gesture).
    */
   _unlock() {
+    this._playbackSession();
     if (this.ctx) {
       const st = this.ctx.state;
       if (st === 'running') { this._dropUnlock(); return; }
@@ -667,6 +668,14 @@ export class AudioManager {
       this._warn('ctx', err);
       this.ctx = null;
     }
+  }
+
+  /** iOS Safari plays game audio through the silent switch when its audio session is set before creating the context. */
+  _playbackSession() {
+    try {
+      const session = this.win?.navigator?.audioSession;
+      if (session && session.type !== 'playback') session.type = 'playback';
+    } catch { /* unavailable on this browser */ }
   }
 
   /** (Re-)attach the gesture listeners after the context stopped running while visible (see _unlock / _onVis). */

@@ -18,12 +18,13 @@ function pickUnitOf(v, walks = false, hitArea = null) {
   if (!v || v.destroyed || (v.alive === false && !v.down)) return null;
   if (Number.isFinite(v.alpha) && v.alpha < 0.05) return null;
   const sc = v.screen;
-  const body = walks && sc && sc.s > 0 && !v.culled ? { x: sc.x, top: Number.isFinite(sc.top) ? sc.top : sc.y, feet: sc.y, s: sc.s } : null;
+  const shown = sc && sc.s > 0 && !v.culled ? { x: sc.x, top: Number.isFinite(sc.top) ? sc.top : sc.y, feet: sc.y, s: sc.s } : null;
+  const body = walks ? shown : null;
   const tile = walks ? null : { row: Math.round(v.y), col: Math.round(v.x) };
   // a huge boss (data `hitArea`): its hit area on the ground and a body box as wide as it are pickable (render/pick.js)
   const area = walks && !v.flying ? hitRectAt(v.x, v.y, hitArea) : null;
   if (area && body) body.hw = hitArea.w / 2;
-  return { tile, x: v.x, y: v.y, fly: walks && !!v.flying, body, area, depth: v.root && !v.root.destroyed ? v.root.zIndex : 0, ref: v };
+  return { tile, x: v.x, y: v.y, fly: walks && !!v.flying, body, drawn: walks ? null : shown, area, depth: v.root && !v.root.destroyed ? v.root.zIndex : 0, ref: v };
 }
 
 export { pieceDirOf, pickUnitOf };

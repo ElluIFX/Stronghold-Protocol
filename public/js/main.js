@@ -63,6 +63,7 @@ import { t, N_, translateWire } from '../../shared/i18n.js';
 import { recordError, installTrafficMeter } from './diag.js';
 import { installContent, installContentSet } from './content.js';
 import { cosmetics } from './cosmetics.js';
+import { presenceFacts } from './ui/presence.js';
 
 const RESTORE_GRACE_MS = 1500;
 const JOIN_DELAY_MS = 350;
@@ -230,6 +231,7 @@ function wireNet() {
         lastError: snap.lastError, everOnline: cur.everOnline || snap.status === 'online',
       },
     });
+    if (snap.status !== 'online') store.patch('queue', { waiting: false, matched: null });
   });
   net.on('clock', (c) => store.set({ clock: { offset: c.offset, rtt: c.rtt, synced: c.synced } }));
   net.on('welcome', onWelcome);
@@ -240,6 +242,11 @@ function wireNet() {
   net.on('replaced', () => toast(t('该身份已在其他页面登录，本页已断开'), 'warn', { ttl: 6000 }));
   net.on('unhandledError', (err) => toastError(err));
   net.on('room.state', onRoomState);
+  net.on('queue.status', (msg) => store.set({ queue: { ...payload(msg), matched: null } }));
+  net.on('queue.matched', (msg) => store.patch('queue', {
+    matched: { code: msg.code, difficulty: msg.difficulty, seated: !!msg.seated },
+  }));
+  net.on('presence', (msg) => store.set({ presence: { ...presenceFacts(msg), via: 'frame' } }));
   net.on('room.closed', (msg) => {
     backToLobby();
     const known = Object.hasOwn(CLOSE_REASON, String(msg.reason)) ? CLOSE_REASON[msg.reason] : null;
@@ -284,6 +291,10 @@ function wireNet() {
   // Entering (title → lobby) while already online also needs the deep-link join.
   store.subscribe((s, prev) => {
     if (s.session.entered && !prev.session.entered) schedulePendingJoin();
+    if (s.queue.matched && s.queue.matched !== prev.queue?.matched && s.queue.matched.seated && !s.room) {
+      store.patch('ui', { pendingJoin: s.queue.matched.code });
+      schedulePendingJoin();
+    }
     // in a room (co-op or solo, also a resumed one) a match is near: its data starts downloading
     if (s.room && !prev.room) warmGameData();
     // the match on screen is over (left, closed, kicked, a new session): a rehearsal task of it is dead, and the frame

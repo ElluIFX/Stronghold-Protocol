@@ -25,7 +25,6 @@ import {
 import { toast, toastError } from '../ui/toasts.js';
 import { copyText } from '../ui/clipboard.js';
 import { GuideButton } from '../ui/guide.js';
-import { ResourceButton } from '../ui/resourceButton.js';
 import { useWakeLock } from '../ui/device.js';
 import { openStats } from './stats.js';
 import { SettingsButton } from '../ui/settings.js';
@@ -420,7 +419,6 @@ export function RoomScreen() {
         <${Button} variant="secondary" size="sm" icon="chart" class="stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>${t('统计')}<//>
         <${SettingsButton} class="room-settings" variant="secondary" label=${t('设置')} />
         <${GuideButton} class="room-guide" variant="secondary" label=${t('玩法说明')} />
-        <${ResourceButton} class="room-res" variant="secondary" />
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">${coop ? 'ALLIANCE LOBBY' : 'SOLO SIMULATION'}<//>

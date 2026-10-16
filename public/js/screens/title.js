@@ -38,6 +38,7 @@ import { scriptOf } from '../../../shared/i18nPacks.js';
 import { GIcon } from '../ui/gameComponents.js';
 import { SettingsModal } from '../ui/settings.js';
 import { installedCount } from '../content.js';
+import { presenceLabel, presenceHint, usePresencePoll } from '../ui/presence.js';
 import { sanitizeName, isValidName } from '../ui/playerName.js';
 
 export { stripLoneSurrogates, sanitizeName, isValidName } from '../ui/playerName.js';
@@ -163,6 +164,8 @@ const STATUS_TEXT = {
 export function TitleScreen() {
   const conn = useStore((s) => s.connection, shallowEqual);
   const pendingJoin = useStore((s) => s.ui.pendingJoin);
+  const presence = useStore((s) => s.presence, shallowEqual);
+  usePresencePoll();
   useLang(); // re-render on a language switch
   const currentName = useStore((s) => s.me.name);
   const [name, setName] = useState(() => currentName || identity.loadName() || '');
@@ -282,6 +285,7 @@ export function TitleScreen() {
         <${Icon} name="info" />${t('本服务器安装了 {n} 个插件', { n: installed })}</button>` : null}
       <span>${t('非官方同人复刻 · 游戏素材版权归 上海鹰角网络 / Yostar 所有')}</span>
       <span class="title-foot__meta">
+        <span class="presence num" data-testid="title-presence" title=${presenceHint()}>${presenceLabel(presence)}</span>
         <a class="title-repo" href="https://github.com/sganggs/Stronghold-Protocol" target="_blank" rel="noopener noreferrer">${t('项目仓库')}</a>
         <${MicroLabel}>v${APP_VERSION} · WEB SIMULATION<//>
         ${DEV_BUILD ? html`<span class="title-dev" role="note">${t('开发版 · 不稳定，请勿用于公开服务器')}</span>` : null}

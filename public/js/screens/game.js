@@ -110,7 +110,7 @@ import {
   terrainInfo, deviceInfo, deviceTipAt, noteDeviceUnits, deviceUnitsForEntry,
   countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
   previewEnemyKey, prepCamera, prepCameraFor, foldCamera, deployFoldsShop, deployFieldOf, fieldTile, panelSide, panelSlots, bondPopupPlace, unitLoadout, deployedRecord,
-  mergeTarget, modeOffBonds, readyFundsPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownStandIn, roundStartReplay,
+  mergeTarget, modeOffBonds, readyFundsPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownStandIn, roundStartReplay, bondStripFolded,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
 import { BriefingScreen } from './briefing.js';
@@ -120,11 +120,11 @@ import { net } from '../net.js';
 import { store, useStore, shallowEqual, serverNow, isSpectating } from '../store.js';
 import { battleRunner } from '../battle/runner.js';
 import '../ui/pluginFrame.js';
-import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, loneHalf, sidesOf, resumedWatch, followedScout } from '../battle/observe.js';
+import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, loneHalf, sidesOf, resumedWatch, followedScout, uniteLocalFor, uniteSwitchFields, uniteHomeField, backTarget, watchPrefOf } from '../battle/observe.js';
 import { screenStrip, playerBonds, playerLayer, detailBondOwner, toggleBond, popupView } from '../ui/watchBonds.js';
 import { data, getMode } from '../data.js';
 import { audio, resultSpeaker, resultVoiceSlot } from '../audio.js';
-import { useDocClass, FullscreenButton } from '../ui/device.js';
+import { useDocClass, useWakeLock, isPhone, FullscreenButton } from '../ui/device.js';
 // MatchEnded, PausedOverlay, the highlight styles and keepEarly live in ./game/*.js.
 import { HUD_HZ_MS, MERGE_HL, SEL_RANGE, cx } from './game/marks.js';
 import { keepEarly, audioEarly } from './game/early.js';
@@ -172,6 +172,7 @@ const inBattleCard = (d) => d?.kind === 'unit' || (d?.kind === 'device' && d.dev
 
 function MatchScreen() {
   useDocClass('sp-in-match');
+  useWakeLock();
   const pub = useStore((s) => s.match.public);
   const priv = useStore((s) => s.match.private);
   const field = useStore((s) => s.match.field);
@@ -279,8 +280,10 @@ function MatchScreen() {
   const lpBaseRef = useRef(null);
   const localLeaks = battleState && battleState.leaks ? battleState.leaks[ownFieldId(myId)] : undefined;
   const uniteLocal = phase === PHASE.UNITE && battleState && battleState.uniteLeft ? battleState.uniteLeft : null;
+  const uniteField = uniteLocal ? battleState.fieldId : null;
   const leaker = phase === PHASE.UNITE && Array.isArray(pub?.unite?.leakers) && pub.unite.leakers.includes(myId);
-  const localLeft = leaker && uniteLocal ? (uniteLocal[myId] ?? 0) : undefined;
+  const ownUniteLocal = uniteLocalFor(pub, uniteLocal, uniteField, myId);
+  const localLeft = leaker && ownUniteLocal ? (ownUniteLocal[myId] ?? 0) : undefined;
   const liveLpNow = liveLp(lpBaseRef.current, {
     phase, round: pub?.round, lp: priv?.lp, statsLeaks: priv?.stats?.leaks, alive,
     leaks: ownLeaks(localLeaks, meP?.pendingLp), cap: gd.config?.lpCapPerRound,
@@ -307,6 +310,11 @@ function MatchScreen() {
 
   // latest values for event handlers bound once
   const live = useRef({});
+  const watchPrefRef = useRef(null);
+  const notePref = (fid, playerId = null) => {
+    const pref = watchPrefOf(live.current.pub, live.current.myId, fid, playerId);
+    if (pref) watchPrefRef.current = pref;
+  };
   // the field the own pieces are deployed on: the own board, or the player's half of the boss field in a boss round's
   // prep (user playtest #5 item 7: legality and the legal-tile highlights read THOSE tiles, like the server)
   const deployField = deployFieldOf(pub, myId);
@@ -779,6 +787,11 @@ function MatchScreen() {
     if (isCombatPhase(phase)) { setCollapsed(false); setDrag(null); view?.highlightTiles(null, null); }
     setSel(null);
     if (phase !== PHASE.PREP) setRewardMin(false);
+    const foldBonds = bondStripFolded(phase, isPhone());
+    if (foldBonds != null) {
+      setBondsCollapsed(foldBonds);
+      if (foldBonds) setBondOpen((b) => (b?.from === 'strip' ? null : b));
+    }
     setSpBusy(null);
   }, [phaseKey]);
 
@@ -798,7 +811,7 @@ function MatchScreen() {
   // row work again, and the bond strip's "👁 name" matches the HUD (battle/observe.js resumedWatch)
   const seenBattleRef = useRef(null);
   useEffect(() => {
-    const r = resumedWatch(battleState, { pub, myId, alive, watching, seen: seenBattleRef.current });
+    const r = resumedWatch(battleState, { pub, myId, alive, watching, seen: seenBattleRef.current, pref: watchPrefRef.current });
     seenBattleRef.current = r.seen;
     if (r.fieldId) setWatching(r.fieldId);
   }, [battleState?.battleId, battleState?.loading, !!pub]);
@@ -910,22 +923,22 @@ function MatchScreen() {
     if (!ok) {
       setWatching((w) => (w === fid ? prev : w));
       setWatchWho((w) => (w === who ? prevWho : w));
-    }
+    } else notePref(fid, playerId);
     return ok;
   }, []);
+
+  const watchBack = (target) => { void actions.watch(target).then((ok) => { if (ok) notePref(target); }); };
 
   /** Back to the own field (返回战场 / the own row). */
   const backHome = useCallback(() => {
     const L = live.current;
     if (L.watching && L.watching !== L.home) {
-      const target = isCombatPhase(L.pub?.phase) ? L.home : ownFieldId(L.myId);
       // client-side combat without an own field to go back to (a 联防 leaker, an eliminated player): the screen keeps
       // the field it shows — g.watch of a field that does not exist would only be refused (an error toast); an
       // eliminated player / spectator seat has no prep board of its own either
       const combatNow = isCombatPhase(L.pub?.phase);
-      const exists = combatNow ? (!isClientCombat(L.pub) || (Array.isArray(L.pub?.fields) && L.pub.fields.some((f) => f && f.fieldId === target)))
-        : (L.alive && !L.spectator);
-      if (exists) actions.watch(target);
+      const target = backTarget(L.pub, L.myId, L.home, L.watching, watchPrefRef.current);
+      if (target && (combatNow || (L.alive && !L.spectator))) watchBack(target);
     }
     setWatching(null);
     setWatchWho(null);
@@ -945,7 +958,10 @@ function MatchScreen() {
     if (self) {
       // (an eliminated player / spectator seat has no prep board of its own to ask for: item 56)
       const combatNow = isCombatPhase(L.pub?.phase);
-      if (L.watching && L.watching !== L.home && (combatNow || (L.alive && !L.spectator))) actions.watch(combatNow ? L.home : ownFieldId(L.myId));
+      if (L.watching && L.watching !== L.home && (combatNow || (L.alive && !L.spectator))) {
+        const target = backTarget(L.pub, L.myId, L.home, L.watching, watchPrefRef.current);
+        if (target) watchBack(target);
+      }
       setWatching(null);
       setWatchWho(null);
       return;
@@ -956,6 +972,11 @@ function MatchScreen() {
   }, []);
 
   const watchField = useCallback((fid) => { requestWatch(fid); }, []);
+  const pickUniteField = useCallback((fid) => {
+    const L = live.current;
+    if (L.watching && fid === uniteHomeField(L.pub, L.myId, watchPrefRef.current)) { backHome(); return; }
+    requestWatch(fid);
+  }, []);
 
   // an eliminated player or a spectator seat follows a player through every phase reset (community report of
   // 2026-10-06, item 56; the idea of PR #189): the server pushes that player's prep board (Match._followScout) — the one
@@ -973,6 +994,7 @@ function MatchScreen() {
     // the phase reset's render (watching null) ran the own-prep branch with this scout meta in `field` and marked it
     // stale: un-mark it, or the enter effect refuses it and the board stays blank until the player moves (PR #189)
     if (staleFieldRef.current === field) staleFieldRef.current = null;
+    watchPrefRef.current = fid.slice(2);
     setWatching(fid);
     setWatchWho({ fieldId: fid, playerId: fid.slice(2) });
   }, [field, pub, watching, alive, spectator, phaseKey, myId]);
@@ -1450,6 +1472,8 @@ function MatchScreen() {
   // the ‹ › pill: on the 联防 / 最终攻势 field on screen — also one watched with 前往查看 (a leaker, an eliminated spectator)
   const layers = cc && combat && field && field.local && (!watchingOther || field.fieldId === watching) ? cameraLayers(field, pub, myId) : [];
   const progress = cc && phase === PHASE.COMBAT ? teammateProgress(pub, myId) : null;
+  const uniteList = cc && phase === PHASE.UNITE && field?.kind === 'unite' ? uniteSwitchFields(pub, myId, { alive }) : [];
+  const uniteSw = uniteList.length > 1 ? { list: uniteList, current: watching && uniteList.includes(watching) ? watching : field.fieldId, onPick: pickUniteField } : null;
   // the bond strip follows the player on screen (DESIGN §20.15, ui/watchBonds.js): a teammate's board / battle (前往查看,
   // an eliminated player's auto-observed field) → their bonds; a 联防 / 最终攻势 field → the player on the ‹ › half (全景:
   // yours when you fight there, else the teammate picked with 前往查看 / the field's first player); in battle with the
@@ -1591,7 +1615,7 @@ function MatchScreen() {
         </div>
       </div>
 
-      <${TeamPanel} pub=${pub} myId=${myId} watching=${watchingNow} bubbles=${bubbles} onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal}
+      <${TeamPanel} pub=${pub} myId=${myId} watching=${watchingNow} bubbles=${bubbles} onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal} uniteField=${uniteField}
         self=${Number.isFinite(priv?.lp) ? { lp: priv.lp, pending: liveLpNow.pending, unite: liveLpNow.unite, left: liveLpNow.left } : null}
         observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone }), observing: watchingOther, onBack: backHome } : null} />
 
@@ -1616,7 +1640,7 @@ function MatchScreen() {
 
       ${combat || mode === 'settle' ? html`<${CombatHud} pub=${pub} myId=${myId} watching=${watchingNow} hud=${hud} myDone=${!!myDone && alive}
         spectating=${!alive} spectator=${spectator} onWatch=${watchField}
-        client=${cc ? { progress, observing: observingName ? { name: observingName } : null, onBack: alive ? backHome : null, layers, layer, onLayer: setLayer } : null} />` : null}
+        client=${cc ? { progress, observing: observingName ? { name: observingName } : null, onBack: alive ? backHome : null, layers, layer, onLayer: setLayer, uniteFields: uniteSw } : null} />` : null}
 
       ${showDeadPill(alive, phase) ? (spectator
         ? html`<div class="gm__dead gm__dead--spectator" role="status"><${GIcon} name="eye" />${t('观战中 · 点击左侧成员头像切换查看')}</div>`

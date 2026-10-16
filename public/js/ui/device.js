@@ -26,8 +26,8 @@
 // CSS counterpart: public/css/devices.css (safe-area insets, touch-action, overscroll, tap-target expansion).
 
 import { useEffect, useState } from '../../vendor/hooks.module.js';
-import { html, Icon } from './components.js';
-import { inApp } from '../appShell.js';
+import { html, Icon, Button } from './components.js';
+import { pwaInstall } from '../pwa.js';
 import { t } from '../../../shared/i18n.js';
 
 /** A touch held this long without moving opens the detail (contextmenu) on DOM controls. */
@@ -67,9 +67,7 @@ export function detectFeatures(win = globalThis) {
   const fine = mq(win, '(any-pointer: fine)');
   const hover = mq(win, '(any-hover: hover)') || mq(win, '(hover: hover)');
   const el = doc?.documentElement;
-  // the Android app is full screen already, and its WebView hosts no element fullscreen (appShell.js)
-  const app = inApp(nav.userAgent || '');
-  const fsEnabled = !app && !!(doc && (doc.fullscreenEnabled || doc.webkitFullscreenEnabled))
+  const fsEnabled = !!(doc && (doc.fullscreenEnabled || doc.webkitFullscreenEnabled))
     && !!(el && (typeof el.requestFullscreen === 'function' || typeof el.webkitRequestFullscreen === 'function'));
   let importMaps = false;
   try { importMaps = typeof win.HTMLScriptElement?.supports === 'function' && win.HTMLScriptElement.supports('importmap'); } catch { importMaps = false; }
@@ -79,7 +77,7 @@ export function detectFeatures(win = globalThis) {
     fine,
     hover,
     fullscreen: fsEnabled,
-    standalone: app || mq(win, '(display-mode: standalone)') || mq(win, '(display-mode: fullscreen)') || nav.standalone === true,
+    standalone: mq(win, '(display-mode: standalone)') || mq(win, '(display-mode: fullscreen)') || nav.standalone === true,
     reducedMotion: mq(win, '(prefers-reduced-motion: reduce)'),
     screenLandscape: screenLandscape(win),
     importMaps,
@@ -229,6 +227,21 @@ export function FullscreenButton({ class: cls = '' }) {
   </button>`;
 }
 
+/** Show the browser's install offer when it is available. */
+export function PwaInstallButton({ class: cls = '', size = 'sm', square = false }) {
+  const [available, setAvailable] = useState(pwaInstall.available);
+  useEffect(() => pwaInstall.subscribe(setAvailable), []);
+  if (!available) return null;
+  return html`<${Button} variant="secondary" size=${size} icon="homePlus" square=${square} class=${cls}
+    title=${t('添加到桌面')} aria-label=${t('添加到桌面')}
+    data-testid="pwa-install" onClick=${() => pwaInstall.request()}>${square ? null : t('添加到桌面')}<//>`;
+}
+
+export function updateRotateHintPwaI18n(doc = globalThis.document) {
+  const btn = doc?.getElementById?.('rotate-hint-pwa');
+  if (btn) btn.textContent = t('添加到桌面');
+}
+
 // ---- boot-time installation ----------------------------------------------------------------------------------------
 
 let installed = null;
@@ -323,6 +336,13 @@ export function installDeviceSupport(win = globalThis) {
   on(doc, 'click', (e) => {
     if (lp.swallowUntil && Date.now() < lp.swallowUntil) { lp.swallowUntil = 0; e.preventDefault(); e.stopPropagation(); }
   }, { capture: true });
+
+  const pwaBtn = doc?.getElementById?.('rotate-hint-pwa');
+  if (pwaBtn) {
+    updateRotateHintPwaI18n(doc);
+    offs.push(pwaInstall.subscribe((available) => { pwaBtn.hidden = !available; }));
+    on(pwaBtn, 'click', () => { pwaInstall.request(); });
+  }
 
   installed = () => { for (const off of offs.splice(0)) { try { off(); } catch { /* ignore */ } } clearTimeout(rotTimer); installed = null; };
   return installed;

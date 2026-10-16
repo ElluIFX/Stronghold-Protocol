@@ -82,7 +82,7 @@
 import { net as appNet } from '../net.js';
 import { store as appStore } from '../store.js';
 import { contentFor as appContentFor, simContent as appSimContent, contentSet as appContentSet } from '../content.js';
-import { fxForm } from '../../../shared/protocol.js';
+import { fxForm, RESULT_LIMITS } from '../../../shared/protocol.js';
 import { spectateEffects } from './observe.js';
 import { recordError, setBattleSource } from '../diag.js';
 import { loadBrowserSim } from './simLoader.js';
@@ -97,6 +97,8 @@ export const CATCHUP_TICKS = 240;
 /** Silent catch-up slice (ticks) while a new battle is prepared before it is shown. */
 const PREPARE_SLICE = 600;
 const MAX_ENTRIES = 4;
+/** Keep one field per player so observing an eight-player room reuses its completed replicas. */
+export const runnerCacheMax = (players) => Math.max(MAX_ENTRIES, Number.isInteger(players) ? players : 0);
 const STATE_EV = new Set(['spawn', 'die', 'deploy', 'status', 'skill', 'leak']);
 /**
  * The b.ev tuples a catch-up frame or the hidden-tab backlog keeps: the state-bearing kinds, and every fx that sets an
@@ -503,13 +505,13 @@ export function createBattleRunner(deps) {
       msg.bossDmg = pool && Number.isFinite(pool.cum) ? pool.cum : 0;
       if (pool && pool.byPlayer) {
         const by = {};
-        for (const pid of Object.keys(pool.byPlayer).slice(0, 4)) by[pid] = pool.byPlayer[pid];
+        for (const pid of Object.keys(pool.byPlayer).slice(0, RESULT_LIMITS.players)) by[pid] = pool.byPlayer[pid];
         msg.by = by;
       }
     } else {
       msg.leaks = Math.min(1e6, p.leaks);
-      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 4 players)
-      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, 4));
+      // Joint-defense survivor reports retain every player's entry within the protocol bound.
+      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, RESULT_LIMITS.players));
     }
     try { net.send('b.progress', msg); } catch { /* offline */ }
   }
@@ -692,9 +694,10 @@ export function createBattleRunner(deps) {
   }
 
   function evict() {
-    if (entries.size <= MAX_ENTRIES) return;
+    const max = runnerCacheMax(store?.get?.()?.match?.public?.players?.length);
+    if (entries.size <= max) return;
     for (const [id, e] of entries) {
-      if (entries.size <= MAX_ENTRIES) break;
+      if (entries.size <= max) break;
       if (e === cur || (e.authoritative && !e.resultSent) || e.own || e.delivery === 'pending' || e.delivery === 'undelivered') continue;
       rememberCombat(e);
       e.host?.stop();

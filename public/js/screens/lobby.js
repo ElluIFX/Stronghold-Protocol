@@ -18,7 +18,6 @@ import {
 } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
-import { ResourceButton } from '../ui/resourceButton.js';
 import { openStats } from './stats.js';
 import { SettingsButton } from '../ui/settings.js';
 import { LoadoutButton } from './loadout.js';
@@ -349,7 +348,6 @@ export function LobbyScreen() {
         <div class="topbar__tools">
           <${SettingsButton} class="lobby-settings" variant="secondary" square=${true} />
           <${GuideButton} class="lobby-guide" variant="secondary" square=${true} />
-          <${ResourceButton} class="lobby-res" variant="secondary" square=${true} />
         </div>
       </div>
       <div class="topbar__center">
