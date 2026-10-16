@@ -91,6 +91,7 @@ export class MatchPlatform {
       // a rehearsal this host was running falls back to the server (DESIGN §14; a no-op without tasks)
       this._rehearsalHostChanged();
       this.markPublic();
+      this.maybeEndPrep();
     });
   }
 
@@ -100,6 +101,7 @@ export class MatchPlatform {
     this.guard(() => {
       const was = ps.connected;
       ps.connected = true;
+      this.maybeEndPrep();
       this._resync(ps);
       if (!was) this.markPublic();
     });

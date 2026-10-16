@@ -132,14 +132,20 @@ export class MatchPrep {
 
   maybeEndPrep() {
     if (this.phase !== PHASE.PREP || this._prepEndQueued) return;
-    const allReady = () => { const alive = this.alivePlayers(); return alive.length > 0 && alive.every((p) => p.ready); };
+    // Connected humans may continue once every active chooser and bot is ready. A disconnected human without
+    // autoplay is resolved through the normal deadline path. An entirely disconnected room retains its deadline.
+    const allReady = () => {
+      const alive = this.alivePlayers();
+      if (!alive.length || alive.some((p) => !p.ready && (p.botControlled || p.connected))) return false;
+      return alive.every((p) => p.ready) || alive.some((p) => !p.isBot && p.connected);
+    };
     if (!allReady()) return;
     const round = this.round;
     this._prepEndQueued = true;
     // the prep deadline stays armed until the phase really ends: a player may un-ready before this runs
     this.later(0, () => {
       this._prepEndQueued = false;
-      if (this.phase === PHASE.PREP && this.round === round && allReady()) this.endPrep();
+      if (this.phase === PHASE.PREP && this.round === round && allReady()) this.prepDeadline();
     });
   }
 

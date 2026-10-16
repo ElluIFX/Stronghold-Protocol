@@ -122,7 +122,7 @@ test('disconnect: the seat keeps playing; draft turns / prep auto-resolve at dea
   h.drive(() => m.phase === PHASE.PREP && m.round === 1);
   assert.equal(h.ps('p_1').bandId, 'band_bldsk');
   const sentBefore = h.sent.length;
-  // p_0 readies; p_1 is auto-readied at the prep deadline
+  // p_0 readies; the disconnected seat resolves without waiting for the prep deadline
   m.handle('p_0', { t: 'g.ready', ready: true });
   h.run(() => m.phase === PHASE.COMBAT);
   assert.ok(h.ps('p_1').ready);
