@@ -73,6 +73,8 @@ test('the commands match ci.yml: the run lines, the npm scripts ci.yml calls, th
     assert.ok(!s.shell || l.id === 'smoke', `${l.id}: shell: ${s.shell}`);
   }
   assert.equal(pkg.scripts.ci, 'node tools/ci.mjs');
+  assert.equal(pkg.scripts.test, 'node tools/test.mjs');
+  assert.match(fs.readFileSync(path.join(ROOT, 'tools/ci.mjs'), 'utf8'), /case 'test': return node\(\['tools\/test\.mjs'\], env\);/);
 });
 
 test('the workflow reader: jobs, flat env, named and uses steps, run blocks; comments and nested blocks skipped, other step keys named', () => {
