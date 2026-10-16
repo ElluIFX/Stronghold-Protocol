@@ -21,11 +21,10 @@ test('two sandbox-script players start without consent and Worker battles verify
  await guest.open();await guest.enter('阿米娅');await guest.click('.join-row input');await guest.page.keyboard.type(code);await guest.click('.join-row button','加入同盟');await guest.page.waitForSelector('.room-screen');
  await host.page.evaluate(()=>globalThis.__SP__.net.request('room.setPlugins',{plugins:[{id:'training'}]}));
  for(const c of [host,guest])await c.page.waitForFunction(()=>globalThis.__SP__.store.get().room?.content?.execution==='sandbox');
- await host.click('[data-testid="plugin-tag"]');
- await host.page.waitForSelector('[data-plugin="training"]');
- assert.match(await host.page.$eval('[data-plugin="training"]',e=>e.textContent),/脚本（沙箱）/);
- await host.click('.modal__actions button','完成');
  for(const c of [host,guest]) {
+  assert.equal(await c.page.$('[data-testid="plugin-tag"]'),null,'no room plugin entry');
+  assert.equal(await c.page.$('[data-testid="plugin-panel"]'),null,'no plugin panel');
+  assert.equal(await c.page.$('[data-testid="unofficial-mark"]'),null,'no unofficial mark');
   assert.equal(await c.page.$('[data-testid="trusted-banner"]'),null);
   assert.equal(await c.page.evaluate(()=>globalThis.__SP__.store.get().room.content.trusted),undefined);
  }
@@ -38,5 +37,8 @@ test('two sandbox-script players start without consent and Worker battles verify
  const match=srv.lobby.getRoom(code).match;let accepted=false,last;
  for(const begin=Date.now();Date.now()-begin<90000;){last=await match.diag();if(last.verifyStats?.verified>0 || last.fields?.some(f=>f.done&&f.resultSource==='client')){accepted=true;break;}await sleep(100);}
  assert.ok(accepted,JSON.stringify(last));assert.equal(last.verifyStats.rejected,0);
- for(const c of [host,guest])assert.equal(await c.page.$('[data-testid="trusted-banner"]'),null);
+ for(const c of [host,guest]) {
+  assert.equal(await c.page.$('[data-testid="trusted-banner"]'),null);
+  assert.equal(await c.page.$('[data-testid="unofficial-mark"]'),null,'the battle HUD shows no unofficial mark');
+ }
 });

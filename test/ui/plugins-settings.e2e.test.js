@@ -1,4 +1,4 @@
-// SP_E2E=1, run this file alone. Settings selected in the actual room panel reach the second browser's content data.
+// SP_E2E=1, run this file alone. Room settings sent through the existing API reach both browsers' content data.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import { Client, OUT, hasChrome } from '../e2e/client.mjs';
 import { writePlugin } from '../helpers/pluginFixtures.js';
 const enabled = process.env.SP_E2E === '1' && hasChrome();
 
-test('room settings form changes both clients content compositions', { skip: !enabled, timeout: 180000 }, async () => {
+test('room settings API changes both clients content compositions without exposing plugin controls', { skip: !enabled, timeout: 180000 }, async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-settings-e2e-'));
   writePlugin(path.join(tmp, 'settings-test'), { manifest: 2, name: 'Settings test', version: '1.0.0', app: '*', api: 1,
     class: 'content', scope: ['room'], permissions: ['data.patch'], data: ['p.json'],
@@ -23,19 +23,31 @@ test('room settings form changes both clients content compositions', { skip: !en
     await host.open(); await host.enter('凯尔希'); await host.click('.mode-card', '同盟模拟'); await host.click('.diff-card', '标准模拟'); await host.click('.create-box button', '创建同盟');
     const code = (await host.waitFor(s => !!s.room?.code, 'room')).room.code;
     await guest.open(); await guest.enter('阿米娅'); await guest.click('.join-row input'); await guest.page.keyboard.type(code); await guest.click('.join-row button', '加入同盟');
-    await host.click('[data-testid="plugin-tag"]');
-    await host.page.waitForSelector('[data-plugin="settings-test"] [role="switch"]');
-    await host.page.click('[data-plugin="settings-test"] [role="switch"]');
-    await host.page.waitForSelector('[data-plugin="settings-test"] [data-setting="defense"]');
-    const selector = '[data-plugin="settings-test"] [data-setting="defense"]';
-    await host.page.click(selector, { count: 3 }); await host.page.type(selector, '0.4');
-    await host.page.click('[data-plugin="settings-test"] [data-testid="plugin-settings"] button[type="submit"]');
+    await guest.page.waitForSelector('.room-screen', { timeout: 15000 });
+    for (const client of [host, guest]) {
+      assert.equal(await client.page.$('[data-testid="plugin-tag"]'), null, `${client.label}: no room plugin entry`);
+      assert.equal(await client.page.$('[data-testid="plugin-panel"]'), null, `${client.label}: no plugin panel`);
+    }
+    await host.page.evaluate(() => globalThis.__SP__.net.request('room.setPlugins', { plugins: [{ id: 'settings-test' }] }));
+    await guest.page.waitForFunction(() => globalThis.__SP__?.store.get().room?.content?.plugins?.some(p => p.id === 'settings-test')
+      && globalThis.__SP__.data.get('bonds')?.deputShip?.bb?.base_def === 0.1, { timeout:30000 });
+    const defaultCs = await guest.page.evaluate(() => globalThis.__SP__.store.get().room.content.cs);
+    await host.page.evaluate(() => globalThis.__SP__.net.request('room.setPlugins', { plugins: [{ id: 'settings-test', settings: { defense: 0.4 } }] }));
     await guest.page.waitForFunction(() => globalThis.__SP__?.data.get('bonds')?.deputShip?.bb?.base_def === 0.4, { timeout:30000 });
+    await host.page.waitForFunction(() => globalThis.__SP__?.data.get('bonds')?.deputShip?.bb?.base_def === 0.4, { timeout:30000 });
     assert.equal(await host.page.evaluate(() => globalThis.__SP__.data.get('bonds').deputShip.bb.base_def), 0.4);
+    const changedCs = await guest.page.evaluate(() => globalThis.__SP__.store.get().room.content.cs);
+    assert.notEqual(changedCs, defaultCs, 'changing settings creates a new content composition');
+    assert.equal(await host.page.evaluate(() => globalThis.__SP__.store.get().room.content.cs), changedCs, 'both browsers load the same composition');
     fs.mkdirSync(OUT, { recursive:true });
     await host.page.screenshot({ path:path.join(OUT,'plugins-settings-host.png'), fullPage:true });
-    await guest.click('[data-testid="plugin-tag"]');
-    await guest.page.waitForSelector(selector);
-    assert.equal(await guest.page.$eval(selector, e => e.disabled), true);
+    const refusal = await guest.page.evaluate(async () => {
+      try {
+        await globalThis.__SP__.net.request('room.setPlugins', { plugins: [{ id: 'settings-test', settings: { defense: 0.8 } }] });
+        return null;
+      } catch (error) { return error.code; }
+    });
+    assert.equal(refusal, 'NOT_HOST', 'the guest cannot change room settings through the API');
+    assert.equal(await guest.page.evaluate(() => globalThis.__SP__.data.get('bonds').deputShip.bb.base_def), 0.4, 'a refused guest change leaves the content intact');
   } finally { await host.close(); await guest.close(); await srv.close(); fs.rmSync(tmp, { recursive:true, force:true }); }
 });

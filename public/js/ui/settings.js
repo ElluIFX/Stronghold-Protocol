@@ -9,11 +9,6 @@
 // 问题反馈, which copies the diagnostics of this page for a bug report (diag.js: the error log, this browser, optionally
 // the battle on screen; nothing is uploaded). The lobby and the room open it from a 设置 button next to 玩法说明
 // (SettingsButton, GitHub #238); the title screen and the match have their own gear.
-// 外观插件 (DESIGN §32 P1a, the design study's §7.5): a switch for each cosmetic plugin of scope `personal` the server's
-// catalogue lists (content.js) — kept in this browser (`sp.pref.cosmetics`), never sent, seen by this player alone and
-// never part of a battle; the section is left out when the server has none. The switched-on ones form a set like a
-// room's (content.js personalSet): one another needs is on as 「自动」 and cannot be switched off alone, a switch that
-// would make a conflict is refused with the room's message, and a chosen one left out (it conflicts now) says so.
 //
 // 文字大小 (textSize, applied by applyTextSize): the interface text root `--t` of css/theme.css — a phone clamps the
 // layout root `1rem` at 40 px (theme.css), which left the .18rem body text at 7.2 CSS px while the browser's own font
@@ -33,11 +28,7 @@ import { LangToggle, machineTranslationNote } from './lang.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
 import { errorCount, currentBattle, diagnosticsText } from '../diag.js';
 import { copyText } from './clipboard.js';
-import { catalog, loadCatalog, cosmeticPlugins, installedCount, personal, personalApplied, personalSet, pluginName, setPersonalPlugin } from '../content.js';
-import { setUiPlugin, uiPluginEntries, uiPlugins } from './uiPlugins.js';
-import { UI_LIMITS } from '../../../shared/plugins/ui.js';
-import { toast, describeError } from './toasts.js';
-import { pluginMicro } from './pluginTag.js';
+import { personalApplied } from '../content.js';
 import { fxAvailable } from '../render/vfx/available.js';
 import { resolveOfficialFx } from '../render/vfx/tier.js';
 
@@ -259,76 +250,6 @@ function DiagSection() {
 }
 
 /**
- * 外观插件 (see the header): the server's cosmetic plugins of scope `personal`, each with its switch; nothing when there
- * is none. The catalogue is fetched again when the section opens (a plugin dropped in meanwhile shows) — on a server that
- * has plugins only (content.js installedCount: a server without any is never asked for it).
- */
-function CosmeticSection() {
-  const cat = useStore((s) => s, Object.is, catalog);
-  const ids = useStore((s) => s.ids, Object.is, personal);
-  const installed = useStore(installedCount);
-  useEffect(() => { if (installed) loadCatalog({ force: true }); }, [installed]);
-  const list = installed ? cosmeticPlugins(cat.plugins, 'personal') : [];
-  if (!list.length) return null;
-  const set = personalSet(ids, list.filter((p) => typeof p.vs === 'string'));
-  const applied = new Set(set.order);
-  const auto = new Set(set.auto);
-  const flip = (id, on) => { const r = setPersonalPlugin(id, on); if ('error' in r) toast(describeError(r.error), 'warn'); };
-  return html`<section class="set-plugins" aria-labelledby="set-plugins-title" data-testid="personal-plugins">
-    <div class="set-keys__head">
-      <span class="set-row__label" id="set-plugins-title">${t('外观插件')}<${MicroLabel}>COSMETIC PLUGINS<//></span>
-    </div>
-    <p class="set-hint">${t('只改变你自己看到的画面和声音，不影响其他博士，也不影响战斗；插件为非官方制作。')}</p>
-    ${list.map((p) => {
-      // on: applied (chosen, or 「自动」: another one needs it) — or chosen but left out now (a conflict): switch it off
-      const skipped = set.skipped.includes(p.id);
-      const on = applied.has(p.id) || skipped;
-      const isAuto = auto.has(p.id);
-      return html`<div key=${p.id} class="set-row" data-plugin=${p.id}>
-        <span class="set-row__label">${pluginName(p)}${isAuto ? html` <span class="plugrow__badge">${t('自动')}</span>` : null}<${MicroLabel}>${pluginMicro(p)}<//>
-          ${skipped ? html`<span class="set-hint is-warn">${t('与其他已开启的插件冲突或缺少所需插件，没有生效')}</span>` : null}</span>
-        <button type="button" class=${`set-toggle${on ? ' is-on' : ''}`} role="switch" aria-checked=${on ? 'true' : 'false'} aria-label=${pluginName(p)}
-          disabled=${isAuto && !ids.includes(p.id)} onClick=${() => flip(p.id, !on)}><i></i><span>${on ? tc('toggle', '开启') : tc('toggle', '关闭')}</span></button>
-      </div>`;
-    })}
-  </section>`;
-}
-
-/**
- * 界面插件 (DESIGN §32.8): each loaded ui plugin of scope `personal`, switched on in this browser only
- * (`sp.pref.ui-plugins`). It cannot play the match and it does not change what anyone else sees.
- */
-function UiPluginSection() {
-  const cat = useStore((s) => s, Object.is, catalog);
-  const ids = useStore((s) => s.ids, Object.is, uiPlugins);
-  const installed = useStore(installedCount);
-  useEffect(() => { if (installed) loadCatalog({ force: true }); }, [installed]);
-  const list = installed ? uiPluginEntries(cat.plugins) : [];
-  if (!installed || (cat.status !== 'ready' && !list.length && !ids.length)) return null;
-  if (!list.length && !ids.length) return null;
-  const onIds = new Set(ids);
-  const flip = (id, on) => {
-    const r = setUiPlugin(id, on);
-    if (!r.error) return;
-    toast(r.error === 'PLUGIN_LIMIT' ? t('最多同时开启 {n} 个界面插件', { n: UI_LIMITS.maxPlugins }) : describeError(r.error), 'warn');
-  };
-  return html`<section class="set-plugins" aria-labelledby="set-ui-plugins-title" data-testid="ui-plugins">
-    <div class="set-keys__head">
-      <span class="set-row__label" id="set-ui-plugins-title">${t('界面插件')}<${MicroLabel}>UI PLUGINS<//></span>
-    </div>
-    <p class="set-hint">${t('只改变这个浏览器里的界面，不能替你操作对局，也不影响其他博士；插件为非官方制作。')}</p>
-    ${!list.length ? html`<p class="set-hint">${t('本服务器没有可开启的界面插件')}</p>` : list.map((p) => {
-      const on = onIds.has(p.id);
-      return html`<div key=${p.id} class="set-row" data-plugin=${p.id}>
-        <span class="set-row__label">${pluginName(p)}<${MicroLabel}>${pluginMicro(p)}<//></span>
-        <button type="button" class=${`set-toggle${on ? ' is-on' : ''}`} role="switch" aria-checked=${on ? 'true' : 'false'} aria-label=${pluginName(p)}
-          onClick=${() => flip(p.id, !on)}><i></i><span>${on ? tc('toggle', '开启') : tc('toggle', '关闭')}</span></button>
-      </div>`;
-    })}
-  </section>`;
-}
-
-/**
  * Settings modal.
  * @param {{ open: boolean, onClose: Function }} props
  */
@@ -381,7 +302,7 @@ export function SettingsModal({ open, onClose }) {
       <${Toggle} label=${t('秘术师能量')} micro="STORED ENERGY" value=${s.mysticEnergy} onChange=${(v) => updateSettings({ mysticEnergy: v })} />
       <p class="set-hint">${t('在秘术师的血条下方显示储存的攻击能量 / 上限（如 2/3）。官方用干员身上的特效表示，没有这个数字。')}</p>
       <${Toggle} label=${t('作战统计')} micro="COMBAT STATS" value=${s.combatMetrics} onChange=${(v) => updateSettings({ combatMetrics: v })} />
-      <p class="set-hint">${t('打开后，对局左下角可以查看自己干员的伤害、治疗和 DPS / HPS。官方界面没有这个窗口。改变玩法的插件对局在 Worker 里演算，统计不到，按钮不显示。')}</p>
+      <p class="set-hint">${t('打开后，对局左下角可以查看自己干员的伤害、治疗和 DPS / HPS。官方界面没有这个窗口。')}</p>
       <div class="set-row">
         <span class="set-row__label">${t('画面质量')}<${MicroLabel}>QUALITY<//></span>
         <div class="set-seg" role="radiogroup">
@@ -406,8 +327,6 @@ export function SettingsModal({ open, onClose }) {
       </div>
       <p class="set-hint set-textsize-note">${t('调整界面文字大小，棋盘保持原比例。')}</p>
       <${HotkeySection} keys=${s.keys} touchUi=${touchUi} />
-      <${CosmeticSection} />
-      <${UiPluginSection} />
       <${DiagSection} />
       <p class="set-hint">${touchUi ? t('触屏操作：点击单位选中（撤退 / 出售）· 长按单位或卡牌查看详情 · 拖动部署后滑动选择朝向') : t('右键查看详情')}</p>
     </div>

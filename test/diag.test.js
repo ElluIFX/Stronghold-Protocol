@@ -167,33 +167,35 @@ describe('the report', () => {
     assert.deepEqual(json, { t: 'b.start', battleId: spec.battleId, fieldId: 'u', kind: 'unite', spec });
   });
 
-  test('the content line: the room\'s content set, else the server\'s vanilla hash; MODDED with its plugins (DESIGN §32)', () => {
+  test('the content line identifies the room hash or server hash without listing plugins', () => {
     const cs = 'ab'.repeat(32);
     const other = 'cd'.repeat(32);
     assert.equal(contentLine({}), 'unknown');
     assert.equal(contentLine({ content: { vanilla: 'short' } }), 'unknown', 'only a full hash');
-    assert.equal(contentLine({ content: { vanilla: cs } }), `vanilla cs=${cs}`, 'the lobby or the title: welcome.content');
-    assert.equal(contentLine({ content: { vanilla: other }, room: { content: { cs, vanilla: true, plugins: [] } } }), `vanilla cs=${cs}`,
+    assert.equal(contentLine({ content: { vanilla: cs } }), `cs=${cs}`, 'the lobby or the title: welcome.content');
+    assert.equal(contentLine({ content: { vanilla: other }, room: { content: { cs, vanilla: true, plugins: [] } } }), `cs=${cs}`,
       'in a room: room.state.content wins');
     assert.equal(contentLine({ room: { content: { cs: other, vanilla: false, plugins: [{ id: 'marathon', version: '0.1.0', hash: 'deadbeef00' }, { id: 'texas-recolor', version: '1.0.0' }] } } }),
-      `MODDED cs=${other} plugins=marathon@0.1.0(deadbeef),texas-recolor@1.0.0`);
+      `cs=${other}`);
     const many = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, version: '1.0.0' }));
-    assert.match(contentLine({ room: { content: { cs, vanilla: false, plugins: many } } }), /,p31@1\.0\.0 \+8$/);
+    assert.equal(contentLine({ room: { content: { cs, vanilla: false, plugins: many } } }), `cs=${cs}`);
+    assert.equal(contentLine({ content: { vanilla: cs }, room: { content: { cs: 'invalid' } } }), `cs=${cs}`, 'invalid room identity falls back to the server');
     const text = buildDiagnostics({ state: { content: { vanilla: cs } }, now: 0, pageStart: 0 });
-    assert.equal(text.split('\n')[3], `content: vanilla cs=${cs}`, 'the line under the version');
+    assert.equal(text.split('\n')[3], `content: cs=${cs}`, 'the line under the version');
   });
 
-  test('the content line with cosmetic plugins (P1a): still vanilla — the cs and the art\'s vs and plugins; the player\'s own after them', () => {
+  test('the content line preserves visual and mode identity while omitting room and personal plugin lists', () => {
     const cs = 'ab'.repeat(32);
     const vs = 'ef'.repeat(32);
     const cosmetic = { cs, vanilla: true, vs, plugins: [{ id: 'texas-red', version: '1.0.0', class: 'cosmetic', hash: '0123456789abcdef' }], warnings: [], bytes: 10 };
-    assert.equal(contentLine({ room: { content: cosmetic } }), `vanilla cs=${cs} cosmetic vs=${vs} plugins=texas-red@1.0.0(01234567)`,
-      'art never changes a battle: the battles are the vanilla ones');
-    assert.equal(contentLine({ content: { vanilla: cs } }, [{ id: 'mine' }, { id: 'zed' }]), `vanilla cs=${cs} personal=mine,zed`);
-    assert.equal(contentLine({ room: { content: cosmetic } }, [{ id: 'mine' }]), `vanilla cs=${cs} cosmetic vs=${vs} plugins=texas-red@1.0.0(01234567) personal=mine`);
-    assert.equal(contentLine({ room: { content: { cs, vanilla: true, plugins: [] } } }, []), `vanilla cs=${cs}`, 'nothing: the line of P0');
+    assert.equal(contentLine({ room: { content: cosmetic } }), `cs=${cs} vs=${vs}`);
+    assert.equal(contentLine({ content: { vanilla: cs } }, [{ id: 'mine' }, { id: 'zed' }]), `cs=${cs}`);
+    assert.equal(contentLine({ room: { content: cosmetic } }, [{ id: 'mine' }]), `cs=${cs} vs=${vs}`);
+    assert.equal(contentLine({ room: { content: { cs, vanilla: true, plugins: [] } } }, []), `cs=${cs}`);
+    assert.equal(contentLine({ room: { content: { ...cosmetic, vanilla: false, modeId: 'mode_custom' } } }), `cs=${cs} vs=${vs} mode=mode_custom`);
+    assert.equal(contentLine({ room: { content: { ...cosmetic, vs: 'invalid', modeId: 'x'.repeat(65) } } }), `cs=${cs}`, 'malformed optional identity fields are omitted');
     const text = buildDiagnostics({ state: { room: { content: cosmetic } }, personal: [{ id: 'mine' }], now: 0, pageStart: 0 });
-    assert.equal(text.split('\n')[3], `content: vanilla cs=${cs} cosmetic vs=${vs} plugins=texas-red@1.0.0(01234567) personal=mine`);
+    assert.equal(text.split('\n')[3], `content: cs=${cs} vs=${vs}`);
   });
 
   test('an empty page: the title screen, nothing recorded, unknown fields left out', () => {

@@ -7,7 +7,7 @@
 // network failed, refused when its composition does not hash to it; the room layer follows room.state.content.vs and
 // goes with the room, a late answer for a room left is dropped; the personal plugins come from the catalogue's vs of
 // each, a plugin the server lacks is skipped, nothing is fetched while none is switched on), the 插件 panel's facts
-// (ui/pluginPanel.js) and the room screen's tag.
+// (ui/pluginPanel.js) and the room's content-readiness helpers.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -387,7 +387,7 @@ describe('content.js', () => {
     assert.deepEqual([catalog.get().status, catalog.get().plugins.length], ['ready', 3], 'a failure keeps the list');
     assert.deepEqual(cosmeticPlugins(body.plugins, 'room').map((p) => p.id), ['a']);
     assert.deepEqual(cosmeticPlugins(body.plugins, 'personal'), []);
-    assert.deepEqual(unofficialPlugins(body.plugins).map((p) => p.id), ['a', 'b'], 'the title screen counts every plugin but a language');
+    assert.deepEqual(unofficialPlugins(body.plugins).map((p) => p.id), ['a', 'b'], 'the catalogue helper excludes language packs');
     assert.equal(pluginName(body.plugins[0]), '甲', 'the interface language (Chinese here)');
     assert.equal(pluginName({ id: 'x' }), 'x');
   });
@@ -416,7 +416,7 @@ describe('the 插件 panel (ui/pluginPanel.js) and the room screen', () => {
     assert.equal(pluginMicro({ id: 'a', version: '1.0.0', artBytes: 4096 }), 'a · v1.0.0 · 4 KB');
   });
 
-  test('a vanilla page loads none of the panel, the asset store or what composes a set at start (the import graph of main.js)', () => {
+  test('the initial page retains content loaders and readiness helpers while keeping management panels and composition lazy', () => {
     const seen = new Set();
     const walk = (rel) => {
       if (seen.has(rel)) return;
@@ -428,20 +428,20 @@ describe('the 插件 panel (ui/pluginPanel.js) and the room screen', () => {
       }
     };
     walk('public/js/main.js');
-    assert.ok(seen.has('public/js/content.js') && seen.has('public/js/cosmetics.js') && seen.has('public/js/ui/pluginTag.js'), 'the small parts are there');
+    assert.ok(seen.has('public/js/content.js') && seen.has('public/js/cosmetics.js'), 'content loading and cosmetic application remain installed');
+    assert.ok(seen.has('public/js/ui/pluginTag.js'), 'the room retains its content-readiness helper');
     for (const lazy of ['public/js/assets.js', 'public/js/ui/pluginPanel.js', 'shared/plugins/visual.js', 'shared/plugins/order.js']) {
       assert.equal(seen.has(lazy), false, `${lazy} loads only when it is needed`);
     }
   });
 
-  test('the room screen shows the tag under its title; the settings show 外观插件; the texts are in every pack', () => {
+  test('title, room and settings omit plugin management entries while the room retains content-readiness checks', () => {
     const roomSrc = readFileSync(path.join(ROOT, 'public/js/screens/room.js'), 'utf8');
-    assert.match(roomSrc, /<\$\{PluginTag\} room=\$\{room\} myId=\$\{me\.playerId\} \/>/);
+    assert.match(roomSrc, /import\s*\{[^}]*\bisModdedRoom\b[^}]*\}\s*from\s*['"]\.\.\/ui\/pluginTag\.js['"]/);
+    assert.doesNotMatch(roomSrc, /\bPluginTag\b|data-testid=["']plugin-tag["']/);
+    const titleSrc = readFileSync(path.join(ROOT, 'public/js/screens/title.js'), 'utf8');
+    assert.doesNotMatch(titleSrc, /\bInstalledPlugins\b|\bopenPlugins\b|title-plugins|pluginPanel\.js/);
     const settingsSrc = readFileSync(path.join(ROOT, 'public/js/ui/settings.js'), 'utf8');
-    assert.match(settingsSrc, /<\$\{CosmeticSection\} \/>/);
-    for (const lang of ['en', 'ja', 'ko', 'zh-TW']) {
-      const pack = JSON.parse(readFileSync(path.join(ROOT, `public/i18n/${lang}.json`), 'utf8'));
-      for (const k of ['原版', '插件 ×{n}', '外观插件', '本服务器安装了 {n} 个插件', '非官方', '本服务器没有安装该插件']) assert.ok(pack[k], `${lang}: ${k}`);
-    }
+    assert.doesNotMatch(settingsSrc, /\bCosmeticSection\b|\bUiPluginSection\b|personal-plugins|ui-plugins/);
   });
 });

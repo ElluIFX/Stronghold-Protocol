@@ -527,8 +527,7 @@ export class Lobby {
     room.pluginsChanged = null;
     // the room's set changed since (re-applied, switched off): nothing to tell
     if (!ids || !room.content?.plugins?.length) return;
-    const names = ids.slice(0, 8).join('、');
-    this.sendToPlayer(room, room.hostId, { t: 'm.toast', kind: 'warn', ...wireMessage(msg('房间插件「{names}」的文件在服务器上变了，请在插件面板中点「重新应用」', { names })) });
+    this.sendToPlayer(room, room.hostId, { t: 'm.toast', kind: 'warn', ...wireMessage(msg('房间内容已在服务器上更新，请重新创建房间')) });
   }
 
   /** @param {string} code @returns {Room | null} */

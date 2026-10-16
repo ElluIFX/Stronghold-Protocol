@@ -163,8 +163,9 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
     guest.clearInbox();
     fs.writeFileSync(path.join(tmp, 'plugins', 'fresh', 'f.png'), png(2, 2, [2, 2, 2, 255]));
     srv.packs.rescan();
-    const toast = await host.waitFor('m.toast', (m) => m.msgid === '房间插件「{names}」的文件在服务器上变了，请在插件面板中点「重新应用」');
-    assert.deepEqual([toast.kind, toast.params?.names], ['warn', 'fresh']);
+    const toast = await host.waitFor('m.toast', (m) => m.msgid === '房间内容已在服务器上更新，请重新创建房间');
+    assert.equal(toast.kind, 'warn');
+    assert.equal(toast.params?.names, undefined);
     await guest.expectNone('m.toast', () => true, 150);
     srv.packs.rescan();
     await host.expectNone('m.toast', () => true, 150);
@@ -176,7 +177,7 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
   });
 
   test('a plugin that changes during a match: the host hears it once the room is back in its lobby, when it can be applied again', async () => {
-    const MSG = '房间插件「{names}」的文件在服务器上变了，请在插件面板中点「重新应用」';
+    const MSG = '房间内容已在服务器上更新，请重新创建房间';
     const host = await player('Mudrock');
     await room(host, 'solo');
     assert.equal((await host.request({ t: 'room.setPlugins', plugins: [{ id: 'later' }] })).t, 'ok');
@@ -190,7 +191,7 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
     host.send({ t: 'g.infoReady' }); // the stub match ends once every human is ready
     await host.waitFor('room.state', (s) => s.inMatch === false);
     const toast = await host.waitFor('m.toast', (m) => m.msgid === MSG);
-    assert.equal(toast.params?.names, 'later');
+    assert.equal(toast.params?.names, undefined);
   });
 
   test('a room holds its visual set while it uses it: released when it changes and when the room goes', () => {

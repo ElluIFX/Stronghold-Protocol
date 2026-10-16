@@ -61,8 +61,8 @@ export const VISUAL_RETRY_MS = Object.freeze([600, 2000]);
 /** How long one attempt at a visual set's document may take before it counts as a transient failure [ASSUMED]. */
 export const VISUAL_TIMEOUT_MS = 30000;
 /** What the page says (once) when a set's document will not load, or when writes were left out / a file failed. */
-const NOT_LOADED = N_('外观插件没有载入，显示原版素材');
-const PARTLY = N_('部分外观插件素材无法使用，相应位置显示原版素材');
+const NOT_LOADED = N_('外观资源未能载入，使用默认素材');
+const PARTLY = N_('部分外观资源无法使用，使用默认素材');
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const isIds = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string' && /^[a-z0-9][a-z0-9-]{1,31}$/.test(x));
@@ -353,7 +353,7 @@ export const CONTENT_TIMEOUT_MS = 60000;
 /** Files of a content set fetched at once. [ASSUMED] */
 const CONTENT_PARALLEL = 4;
 /** What the page says (once) when the room's content set will not load or check. */
-const CONTENT_FAILED = N_('房间的插件内容未能通过校验，请刷新页面重试');
+const CONTENT_FAILED = N_('房间内容未能通过校验，请刷新页面重试');
 
 /**
  * The room's content set as this page has it (header "The room's content set"): `cs` (null: the original content),

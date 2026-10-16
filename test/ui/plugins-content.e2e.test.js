@@ -2,10 +2,10 @@
 //   SP_E2E=1 node --test test/ui/plugins-content.e2e.test.js   (SP_E2E_VERBOSE=1: the server's log too)
 //
 // A server with a data plugin of its own (bond-def: a bond value patched — no file of the game) and two browsers: the
-// host switches it on in the room's 插件 panel → both pages download the room's content set, check every file's bytes and
-// the manifest against the room's cs (the seats read 插件内容就绪; the tag 非官方) and show its data (the patched bond in
-// data.get('bonds')); the guest readies, the host starts → the match runs in the set's match host worker (the briefing's
-// and the HUD's unofficial marks) — the host's page is the authority of its own battle: it simulates on the set's data and
+// host enables it through room.setPlugins → both pages download the room's content set, check every file's bytes and
+// the manifest against the room's cs (the seats read 房间内容就绪) and show its data (the patched bond in data.get('bonds')).
+// The title, room, briefing and HUD expose no plugin controls or marks. The guest readies, the host starts → the match
+// runs in the set's match host — the host's page is the authority of its own battle: it simulates on the set's data and
 // its b.result (naming the room's cs) is accepted by the server (the worker's field: resultSource 'client'). The guest's
 // page was made to claim another content (__SP_CONTENT__.forgeHeldCs, a tampered cs): it is no authority — it sends no
 // b.result — and the server takes its field over at the deadline (resultSource 'server'). No console / page errors, no
@@ -54,26 +54,20 @@ describe('a room\'s content set in the browser (P1c)', { skip: !ENABLED && 'set 
       await guest.page.waitForSelector('.room-screen', { timeout: 15000 });
       const vanillaBond = await guest.page.evaluate(async () => (await globalThis.__SP__.data.load('bonds'))?.deputShip?.bb?.base_def);
 
-      // the host switches the data plugin on in the 插件 panel
-      await host.click('[data-testid="plugin-tag"]');
-      await host.page.waitForSelector('[data-testid="plugin-panel"] [data-plugin="bond-def"]', { timeout: 10000 });
-      assert.match(await host.page.$eval('[data-plugin="bond-def"]', (e) => e.textContent), /改变玩法/);
-      await host.click('[data-plugin="bond-def"] button[role="switch"]');
-      await host.page.waitForFunction(() => document.querySelector('[data-plugin="bond-def"] button[role="switch"]')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
-      await host.page.waitForFunction(() => /通过校验/.test(document.querySelector('[data-testid="content-state"]')?.textContent || ''), { timeout: 30000 });
-      await host.shot('panel');
-      await host.click('.modal__actions button', '完成');
+      await host.page.evaluate(() => globalThis.__SP__.net.request('room.setPlugins', { plugins: [{ id: 'bond-def' }] }));
+      await guest.page.waitForFunction(() => globalThis.__SP__.store.get().room?.content?.plugins?.some(p => p.id === 'bond-def'), { timeout: 30000 });
 
-      // both pages: the set downloaded and checked, its data shown, every seat 插件内容就绪, the tag 非官方
+      // Both pages check the set and display its data; every seat passes the unchanged readiness gate.
       const room = await guest.page.evaluate(() => globalThis.__SP__.store.get().room);
       assert.equal(room.content.vanilla, false);
       const cs = room.content.cs;
       for (const c of [host, guest]) {
         await c.page.waitForFunction((want) => { const s = globalThis.__SP_CONTENT__?.state(); return s && s.status === 'ready' && s.held === want; }, { timeout: 30000 }, cs);
         await c.page.waitForFunction(() => [...document.querySelectorAll('[data-testid="seat-content"]')].length === 2
-          && [...document.querySelectorAll('[data-testid="seat-content"]')].every((e) => /插件内容就绪/.test(e.textContent)), { timeout: 15000 });
+          && [...document.querySelectorAll('[data-testid="seat-content"]')].every((e) => /房间内容就绪/.test(e.textContent)), { timeout: 15000 });
         assert.equal(await c.page.evaluate(() => globalThis.__SP__.data.get('bonds')?.deputShip?.bb?.base_def), 0.3, `${c.label}: the room's data`);
-        assert.match(await c.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /非官方/);
+        assert.equal(await c.page.$('[data-testid="plugin-tag"]'), null, `${c.label}: no room plugin entry`);
+        assert.equal(await c.page.$('[data-testid="plugin-panel"]'), null, `${c.label}: no plugin panel`);
       }
       assert.notEqual(vanillaBond, 0.3);
       await guest.shot('room-guest');
@@ -83,7 +77,8 @@ describe('a room\'s content set in the browser (P1c)', { skip: !ENABLED && 'set 
       await guest.click('.room-bar__right button', '准备就绪');
       await host.page.waitForFunction(() => !document.querySelector('.room-bar__right button[disabled]'), { timeout: 15000 });
       await host.click('.room-bar__right button', '开始模拟');
-      await host.page.waitForSelector('.brief [data-testid="unofficial-mark"]', { timeout: 30000 });
+      await host.page.waitForSelector('.brief', { timeout: 30000 });
+      assert.equal(await host.page.$('[data-testid="unofficial-mark"]'), null, 'the briefing shows no unofficial mark');
       await host.shot('briefing');
       const match = srv.lobby.getRoom(code).match;
       assert.equal(match.hosted, true, 'the match runs in the content set\'s match host');
@@ -92,7 +87,8 @@ describe('a room\'s content set in the browser (P1c)', { skip: !ENABLED && 'set 
       const hostId = await host.page.evaluate(() => globalThis.__SP__.store.get().me.playerId);
       const guestId = await guest.page.evaluate(() => globalThis.__SP__.store.get().me.playerId);
       await host.waitFor((s) => s.phase === 'COMBAT', 'the first battle', 120000);
-      await host.page.waitForSelector('.gtop [data-testid="unofficial-mark"]', { timeout: 15000 });
+      await host.page.waitForSelector('.gtop', { timeout: 15000 });
+      assert.equal(await host.page.$('[data-testid="unofficial-mark"]'), null, 'the battle HUD shows no unofficial mark');
       await host.shot('hud');
       // every finished field seen, by battle: the match clears its fields at the settlement, COMBAT_END (1.5 s, here
       // scaled to 0.15 s) after the last one finished — a poll may well miss the moment both are done
