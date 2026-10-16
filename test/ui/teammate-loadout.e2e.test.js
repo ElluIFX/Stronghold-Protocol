@@ -88,7 +88,7 @@ describe('DESIGN §16 — a teammate\'s unit shows its owner\'s loadout (real se
       assert.deepEqual(await loOf(host), {}, 'the host fights with the defaults');
       for (const c of [host, guest]) await c.click('.brief__foot .btn--primary', '准备就绪');
       // the draft first (a client still in the briefing would count as done without picking: its turn then runs out —
-      // Match.BAND_TURN_SECONDS, 50 s each since the 2026-10-10 official-play report)
+      // Match.BAND_TURN_SECONDS, 30 s for each turn in this two-player match)
       for (const c of [host, guest]) await c.waitFor((s) => s.phase !== 'INFO_CHECK', 'band draft', 40000);
       const picked = new Set();
       const t0 = Date.now();

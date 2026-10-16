@@ -1,4 +1,4 @@
-// test/render/makoto-persona.test.js — the fork's collab pick 结城理 (docs/design/fork.md §F6): his <替身> is the persona of
+// test/render/makoto-persona.test.js — the collab operator 结城理: his <替身> is the persona of
 // his skill, drawn on its own clips of his skeleton (render/units.js FORMS char_4217_makoto). The sim (kits/ops/op-makoto.js
 // MODEL) follows the engine's 'doll' with an fx 'persona' { form, dur } and keeps the persona as the UnitInfo `form`; the
 // view plays its SwitchIn, its idle / attack, its SwitchOut over the last second, and the 本体 back on the <总攻击> clip; S3

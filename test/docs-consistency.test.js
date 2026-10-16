@@ -322,9 +322,13 @@ test('user playtest #4 (DESIGN §18): picking by tile, timers, 机变 two taps, 
   assert.match(DESIGN, /solo and any single-human match untimed/);
   assert.match(META, /solo \/ single human untimed/);
   assert.match(PLAYING, /只有你一名玩家/);
-  // #4 one countdown: BAND_TURN_SECONDS per turn (code = data = docs)
-  assert.equal(BAND_TURN_SECONDS, 50);
-  assert.equal(DATA.config.timers.bandTurn, BAND_TURN_SECONDS);
+  // The fork uses 30-second turns through four seats and 20-second turns above four. Raw data and the imported
+  // upstream documentation retain the official 50-second value.
+  assert.equal(BAND_TURN_SECONDS, 30);
+  const draftData = new GameData(DATA, 'mode_multi_hard');
+  for (const seats of [2, 3, 4]) assert.equal(draftData.bandTurnSeconds(seats, BAND_TURN_SECONDS), 30);
+  for (const seats of [5, 6, 7, 8]) assert.equal(draftData.bandTurnSeconds(seats, BAND_TURN_SECONDS), 20);
+  assert.equal(DATA.config.timers.bandTurn, 50);
   assert.match(DESIGN, /`BAND_TURN_SECONDS` 50 s per turn = m\.public\.deadline/);
   assert.match(META, /`Match\.BAND_TURN_SECONDS` 50/);
   assert.match(PLAYING, /\*\*每人 50 秒\*\*/);

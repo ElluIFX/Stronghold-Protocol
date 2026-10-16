@@ -34,7 +34,7 @@ export function phaseMode(phase) {
 export const isCombatPhase = (phase) => COMBAT_PHASES.has(phase);
 
 /**
- * The bond strip's state a phase change sets on a phone (DESIGN §F2.1): folded at the start of each 休整期 — the zoomed
+ * The bond strip's state a phase change sets on a phone: folded at the start of each 休整期 — the zoomed
  * prep board puts the back row under the strip. null: leave it as the player set it (every other phase keeps the
  * player's choice, issue #142; not a phone). The 盟约 / 收起 button still folds and unfolds it by hand.
  * @param {string} phase · @param {boolean} phone · @returns {boolean|null} true = folded
