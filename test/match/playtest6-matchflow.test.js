@@ -70,7 +70,7 @@ test('#19 many reward offers at every shop level: never the same operator twice;
       if (new Set(ids).size !== ids.length) dupBefore++;
       assert.equal(ids.length, 3);
       for (const x of ids) assert.equal(DATA.chess[x].tier, Math.min(level + 1, 6));
-      assert.deepEqual(m.pool.snapshot(), before, 'an offer takes no copies (only the pick does)');
+      assert.deepEqual(m.pool.snapshot(), before, 'displaying a free reward leaves purchase stock unchanged');
       ps.offers.length = 0;
     }
   }
@@ -82,25 +82,26 @@ test('#19 a tier short of different operators: the offer tops up from the tier b
   const { m, ps } = soloPrep(650, 3); // offers of tier IV
   const t4 = chessOfTier(4).filter((x) => m.pool.has(x));
   const keep = t4.slice(0, 2);
-  const drained = new Map();
-  for (const x of t4) if (!keep.includes(x)) drained.set(x, m.pool.take(x, 100));
+  const entries = m.pool.entries;
+  m.pool.entries = new Map([...entries].filter(([id, e]) => e.tier !== 4 || keep.includes(id)));
   for (let k = 0; k < 20; k++) {
     const offer = ps.pushRewardOffer('merge');
     const ids = offer.slots.map((s) => s.id);
     assert.equal(new Set(ids).size, 3, ids.join(', '));
-    assert.deepEqual(ids.filter((x) => DATA.chess[x].tier === 4).sort(), keep.slice().sort(), 'both tier-IV operators left are offered');
+    assert.deepEqual(ids.filter((x) => DATA.chess[x].tier === 4).sort(), keep.slice().sort(), 'both eligible tier-IV identities are offered');
     assert.equal(ids.filter((x) => DATA.chess[x].tier === 3).length, 1, 'the third comes from tier III');
     if (k < 19) ps.offers.length = 0;
   }
-  // pick the tier-III one: one copy leaves the pool, into the hand
+  m.pool.entries = entries;
+  // Picking the tier-III reward grants a copy without consuming purchase stock.
   const offer = ps.offers[0];
   const idx = offer.slots.findIndex((s) => DATA.chess[s.id].tier === 3);
   const id = offer.slots[idx].id;
   const left = m.pool.left(id);
   assert.deepEqual(m.handle('p_0', { t: 'g.reward', idx }), { ok: true });
-  assert.equal(m.pool.left(id), left - 1);
+  assert.equal(m.pool.left(id), left);
   assert.ok(ps.hand.some((p) => p && p.id === id));
-  for (const [x, n] of drained) m.pool.give(x, n);
+  assert.equal(ps.hand.find(p => p?.id === id).poolCopies, 0);
   checkInvariants(m);
   m.dispose();
 });

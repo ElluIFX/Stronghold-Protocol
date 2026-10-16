@@ -490,7 +490,7 @@ test('an elite skips illegal tiles after terrain changes: hand first, then the e
     } else {
       assert.equal(loc.area, 'temp', `${label}: retained without occupying an illegal tile`);
       assert.equal(ps.temp.length, 6);
-      assert.equal(elite.poolCopies, 3);
+      assert.equal(elite.poolCopies, 2);
     }
     m.dispose();
   }

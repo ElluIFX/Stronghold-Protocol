@@ -76,13 +76,13 @@ test('画卷 copies a worn 变形同构体 into the hand; the extra bond waits u
   h.invariants();
 });
 
-test('画卷 does not overdraw 变形同构体 once the tier-VI stock is full', (t) => {
+test('画卷 copies 变形同构体 after purchase stock is full without taking more copies', (t) => {
   const { h, m, ps, art } = open();
   t.after(() => h.m.dispose());
   const { piece, at } = place(m, ps, OUTSIDER);
   assert.equal(m.itemPool.cap(ISO), 3);
   const got = [];
-  for (let i = 0; i < 3; i++) got.push(ps.acquireItem(ISO));
+  for (let i = 0; i < 3; i++) got.push(ps.acquireItem(ISO, { fromPool: true }));
   assert.ok(got.every(Boolean));
   assert.equal(m.itemPool.canGain(ISO), false);
   assert.deepEqual(m.handle('p_0', { t: 'g.equip', itemUid: got[0].uid, targetUid: piece.uid }), OK);
@@ -90,7 +90,8 @@ test('画卷 does not overdraw 变形同构体 once the tier-VI stock is full', 
   const copy = ps.allChess().find((p) => m.gd.baseIdOf(p.id) === OUTSIDER && p.uid !== piece.uid);
   assert.ok(copy);
   assert.deepEqual(copy.items, []);
-  assert.equal(tally(ps, ISO), 3, 'the scroll refuses a fourth morph');
+  assert.equal(tally(ps, ISO), 4, 'the scroll grants a fourth morph');
+  assert.equal(m.itemPool.held(ISO), 3, 'the copied morph occupies no purchase stock');
   h.invariants();
 });
 

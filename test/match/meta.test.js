@@ -117,7 +117,7 @@ test('garrisons fire on their eventType only; hand pieces skip character_target_
   m.dispose();
 });
 
-test('ctx helpers: funds, layers (requireActive), grants (pool-aware), effects with counters, teammates, errors isolated', () => {
+test('ctx helpers: funds, layers (requireActive), grants independent of stock, effects with counters, teammates, errors isolated', () => {
   const reg = registerBuiltins(new MetaRegistry(), DATA);
   let captured = null;
   reg.global('ctx', { onRoundStart: (ctx) => { captured = ctx; } });
@@ -143,9 +143,9 @@ test('ctx helpers: funds, layers (requireActive), grants (pool-aware), effects w
   const left = m.pool.left(id);
   const got = ctx.grantChess(id);
   assert.ok(got && got.id === id);
-  assert.equal(m.pool.left(id), left - 1);
+  assert.equal(m.pool.left(id), left);
   const drained = m.pool.take(id, 100);
-  assert.equal(ctx.grantChess(id), null, 'pool empty → the grant fails');
+  assert.ok(ctx.grantChess(id), 'effect grants succeed with an empty purchase pool');
   m.pool.give(id, drained);
   assert.equal(ctx.grantChess('not_a_chess'), null);
   ctx.grantFreeRefresh(2);

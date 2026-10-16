@@ -22,7 +22,7 @@ function field(h, elites = 0) {
 }
 
 for (const reason of ['eliminated', 'quit']) for (const elites of [0, 2]) {
-  test(`Touch team grant survives holder ${reason}, receiver elites=${elites}`, t => {
+  test(`Touch stops appearing in new fields after its last holder ${reason}, receiver elites=${elites}`, t => {
     const h = setup(t), before = field(h, elites), expected = elites ? 'char_613_acmedc' : 'char_605_cmedic';
     assert.deepEqual(medics(before).map(u => u.defId), [expected]);
     if (reason === 'quit') h.m.onLeave('p_0');
@@ -33,9 +33,9 @@ for (const reason of ['eliminated', 'quit']) for (const elites of [0, 2]) {
       h.m.settle(null, null); h.toPrep(2); h.setStage('act2autochess_m01');
     }
     assert.equal(h.ps('p_0').alive, false);
-    assert.equal(h.ps('p_1').privateView().prepMapChars.length, 1);
+    assert.equal(h.ps('p_1').privateView().prepMapChars.length, 0);
     const after = field(h, elites);
-    assert.deepEqual(medics(after).map(u => u.defId), [expected]);
+    assert.deepEqual(medics(after).map(u => u.defId), []);
     assert.equal(after.players[0].input.contentInfo.teammates.some(p => p.playerId === 'p_0'), false,
       'retaining Touch does not revive dead teammate contexts');
     for (let i = 0; i < 30; i++) before.step();

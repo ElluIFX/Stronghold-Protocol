@@ -1,4 +1,4 @@
-// INFO_CHECK, band draft (order / skip / one turn clock / timeouts / highlighted band / 队友已选) and 机变 SP drafts (order /
+// INFO_CHECK, band draft (order / skip / one turn clock / timeouts / highlighted band / repeated picks) and 机变 SP drafts (order /
 // timers / auto-assign / effects); a single human (solo or co-op with AI teammates) is never timed outside battles.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +32,7 @@ test('INFO_CHECK: ends when every human confirmed (bots/departed count as ready)
   h2.m.dispose();
 });
 
-test('band draft (co-op): random order, one pick per turn, NOT_YOUR_TURN, one skip each (moves to the end), 队友已选 refused', () => {
+test('band draft (co-op): random order, one pick per turn, NOT_YOUR_TURN, one skip each, repeated strategies allowed', () => {
   // find a seed where both humans are not first... just use the order the match chose
   const h = makeMatch({ mode: 'coop', humans: 3, seed: 5 }).start();
   const m = h.m;
@@ -52,10 +52,8 @@ test('band draft (co-op): random order, one pick per turn, NOT_YOUR_TURN, one sk
   assert.deepEqual(m.handle(second, { t: 'g.band', bandId: 'band_sarkazb' }), { ok: true });
   assert.equal(h.ps(second).lp, 45, '歌利亚 starts with 45 LP');
   assert.deepEqual(m.handle(second, { t: 'g.band', bandId: 'band_sarkazb' }), { error: ERR.ALREADY });
-  // research 09 §5 / DESIGN §14 corrections: a strategy a teammate already took is 队友已选 (test/ui/bandDraft.test.js)
-  assert.equal(m.handle(third, { t: 'g.band', bandId: 'band_sarkazb' }).error, ERR.BAD_TARGET, '队友已选: no duplicates');
-  assert.equal(m.draftTurn(), third, 'the refused pick keeps the turn');
-  assert.deepEqual(m.handle(third, { t: 'g.band', bandId: 'band_amiya' }), { ok: true });
+  assert.deepEqual(m.handle(third, { t: 'g.band', bandId: 'band_sarkazb' }), { ok: true });
+  assert.equal(h.ps(third).lp, 45, 'repeated strategy keeps its own initial LP');
   assert.equal(m.draftTurn(), first);
   assert.deepEqual(m.handle(first, { t: 'g.bandSkip' }).error, ERR.ALREADY, 'only one skip');
   assert.deepEqual(m.handle(first, { t: 'g.band', bandId: 'band_lisa' }), { ok: true });
@@ -86,17 +84,14 @@ test('band draft timers (user playtest #4 item 4): one countdown of BAND_TURN_SE
     assert.equal(pub.deadline, pub.draft.turnDeadline, 'one countdown');
     assert.equal(pub.draft.turnSeconds, BAND_TURN_SECONDS);
   }
-  // a timeout gives 华法琳 while no teammate holds it, else the first free strategy by sortId — never 队友已选
-  // (Match.defaultBand): replay the assignments in draft order
-  const taken = new Set();
+  // Every passive human receives the configured default, independently of earlier picks.
   for (const pid of m.draft.order) {
-    if (pid.startsWith('ai_')) { assert.ok(DATA.bands[h.ps(pid).bandId], 'bot picked a band'); taken.add(h.ps(pid).bandId); continue; }
-    const want = !taken.has('band_bldsk') ? 'band_bldsk' : m.gd.bandIds().find((b) => !taken.has(b));
-    assert.equal(h.ps(pid).bandId, want, `${pid} gets the default strategy nobody else holds`);
+    if (pid.startsWith('ai_')) { assert.ok(DATA.bands[h.ps(pid).bandId], 'bot picked a band'); continue; }
+    const want = m.gd.bandDraft.timeoutBandId;
+    assert.equal(h.ps(pid).bandId, want, `${pid} gets the configured default strategy`);
     assert.equal(h.ps(pid).lp, DATA.bands[want].totalHp);
-    taken.add(want);
   }
-  assert.equal(new Set(Object.values(m.draft.picks)).size, 4, 'no duplicate strategies');
+  assert.equal(Object.keys(m.draft.picks).length, 4, 'every seat receives one strategy');
   m.dispose();
   // 4 humans idle: 4 whole turns (the old 50 s step cap would have cut the last ones short)
   const h2 = makeMatch({ mode: 'coop', humans: 4, seed: 9 }).start();
@@ -110,11 +105,11 @@ test('band draft timers (user playtest #4 item 4): one countdown of BAND_TURN_SE
   assert.ok(took2 >= 4 * TURN_MS - 5 && took2 <= 4 * TURN_MS + 50, `four turns (${took2} ms)`);
   assert.equal(h2.ps(first).bandId, 'band_amiya', 'the first timeout takes the highlighted strategy');
   assert.equal(h2.ps(h2.m.draft.order[1]).bandId, 'band_bldsk', 'the next one the official default');
-  assert.equal(new Set([...h2.m.players.values()].map((ps) => ps.bandId)).size, 4, 'the rest get distinct free strategies');
+  assert.ok(h2.m.draft.order.slice(1).every((pid) => h2.ps(pid).bandId === 'band_bldsk'), 'all remaining turns use the same configured default');
   h2.m.dispose();
-  // data and code say the same: data/config.json timers.bandTurn (tools/build-data.mjs) = Match.BAND_TURN_SECONDS
-  assert.equal(BAND_TURN_SECONDS, 50, 'owner official-play report: 50 seconds per multiplayer pick');
-  assert.equal(DATA.config.timers.bandTurn, BAND_TURN_SECONDS);
+  // The runtime rule keeps the fork's timeout while original generated data stays unchanged.
+  assert.equal(BAND_TURN_SECONDS, 30, 'the fork keeps 30 seconds for up to four seats');
+  assert.equal(h.m.bandTurnSeconds(), BAND_TURN_SECONDS);
 });
 
 test('band draft (solo): free pick, no timer, no skip; mode-restricted bands rejected', () => {
@@ -131,6 +126,84 @@ test('band draft (solo): free pick, no timer, no skip; mode-restricted bands rej
   if (multiOnly) assert.equal(m.handle('p_0', { t: 'g.band', bandId: multiOnly.bandId }).error, ERR.BAD_TARGET);
   assert.deepEqual(m.handle('p_0', { t: 'g.band', bandId: 'band_orchid' }), { ok: true });
   assert.equal(h.ps('p_0').lp, DATA.bands.band_orchid.totalHp);
+  m.dispose();
+});
+
+function eightSeatDraft(options = {}) {
+  const h = makeMatch({ mode: 'coop', humans: 8, seed: 19, fake: true, ...options }).start();
+  for (const ps of h.m.order) if (!ps.isBot) assert.deepEqual(h.m.handle(ps.playerId, { t: 'g.infoReady' }), { ok: true });
+  h.sched.advance(1);
+  assert.equal(h.m.phase, PHASE.BAND_DRAFT);
+  return h;
+}
+
+test('eight humans may choose the same strategy and initialize round one independently', () => {
+  const h = eightSeatDraft();
+  const m = h.m;
+  const order = m.draft.order.slice();
+  for (const pid of order) {
+    assert.equal(m.draftTurn(), pid);
+    assert.deepEqual(m.handle(pid, { t: 'g.band', bandId: 'band_amiya' }), { ok: true });
+    assert.equal(h.ps(pid).lp, m.gd.startLp('band_amiya'));
+  }
+  assert.equal(Object.keys(m.draft.picks).length, 8);
+  assert.ok(m.order.every((ps) => ps.bandId === 'band_amiya'));
+  h.drive(() => m.phase === PHASE.PREP && m.round === 1);
+  checkInvariants(m);
+  assert.deepEqual(h.logs.error, []);
+  m.dispose();
+});
+
+test('eight human timeouts honor the same highlighted strategy or configured default for every seat', () => {
+  for (const focused of [false, true]) {
+    const h = eightSeatDraft();
+    const m = h.m;
+    if (focused) for (const ps of m.order) assert.deepEqual(m.handle(ps.playerId, { t: 'g.bandFocus', bandId: 'band_amiya' }), { ok: true });
+    const start = h.sched.now();
+    const turnMs = m.bandTurnSeconds() * 1000;
+    h.run(() => m.phase !== PHASE.BAND_DRAFT, { maxTime: 9 * turnMs });
+    assert.equal(m.phase, PHASE.BATTLE_CHECK);
+    assert.ok(h.sched.now() - start >= 8 * turnMs - 5, 'every human receives a complete turn');
+    const want = focused ? 'band_amiya' : m.gd.bandDraft.timeoutBandId;
+    assert.deepEqual(Object.values(m.draft.picks), Array(8).fill(want));
+    checkInvariants(m);
+    m.dispose();
+  }
+});
+
+test('eight bot turns accept repeated weighted draws without rerolling or substituting a strategy', () => {
+  const h = makeMatch({ mode: 'coop', humans: 0, bots: 8, seed: 19, fake: true });
+  let draws = 0;
+  h.m.rngBots = () => { draws++; return 0; };
+  h.start();
+  h.run(() => h.m.phase === PHASE.BATTLE_CHECK);
+  assert.equal(h.m.phase, PHASE.BATTLE_CHECK);
+  assert.equal(draws, 8, 'one weighted draw per bot turn');
+  const picked = Object.values(h.m.draft.picks);
+  assert.equal(picked.length, 8);
+  assert.equal(new Set(picked).size, 1);
+  assert.ok(h.m.gd.bandAllowed(picked[0]));
+  checkInvariants(h.m);
+  h.m.dispose();
+});
+
+test('departing draft seats receive the same configured default as existing teammates', () => {
+  const h = eightSeatDraft();
+  const m = h.m;
+  const order = m.draft.order.slice();
+  const bandId = m.gd.bandDraft.timeoutBandId;
+  assert.deepEqual(m.handle(order[0], { t: 'g.band', bandId }), { ok: true });
+  for (const pid of order.slice(1)) {
+    m.onLeave(pid);
+    assert.equal(m.draft.picks[pid], bandId);
+    assert.equal(h.ps(pid).bandId, bandId);
+    assert.equal(h.ps(pid).alive, false);
+  }
+  assert.deepEqual(Object.values(m.draft.picks), Array(8).fill(bandId));
+  h.sched.advance(1);
+  assert.equal(m.phase, PHASE.BATTLE_CHECK);
+  checkInvariants(m);
+  assert.deepEqual(h.logs.error, []);
   m.dispose();
 });
 

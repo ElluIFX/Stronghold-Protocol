@@ -79,7 +79,8 @@ test('a chess granted after the battle can be moved into a freed hand slot; what
   const chess = ps.temp.find((p) => p && p.kind === 'chess');
   const item = ps.temp.find((p) => p && p.kind === 'item');
   assert.ok(chess && chess.id === T && item && item.id === GRANTS[2], 'both grants waited in temp');
-  assert.equal(m.pool.left(T), cap - 1, 'the temp chess holds its pool copy');
+  assert.equal(chess.poolCopies, 0);
+  assert.equal(m.pool.left(T), cap, 'a temporary gift leaves purchase stock unchanged');
   // free a hand slot (destroy a filler) and take the chess into it
   const filler = ps.hand.findIndex((p) => p && p.kind === 'item');
   assert.deepEqual(m.handle('p_0', { t: 'g.destroy', uid: ps.hand[filler].uid }), { ok: true });
@@ -95,13 +96,13 @@ test('a chess granted after the battle can be moved into a freed hand slot; what
   assert.ok(ps.tempEmpty, 'resolved at the deadline of the prep it was shown in');
   assert.ok(!ps.find(item.uid), 'the item was destroyed');
   assert.equal(ps.find(chess.uid).area, 'hand', 'the chess taken out of temp is kept');
-  assert.equal(m.pool.left(T), cap - 1);
+  assert.equal(m.pool.left(T), cap);
   checkInvariants(m);
   assert.deepEqual(audit.violations, [], audit.violations.join('\n'));
   m.dispose();
 });
 
-test('a chess still in temp at the next deadline is sold back: its pool copy returns', () => {
+test('a gifted chess still in temp at the next deadline is resolved without changing purchase stock', () => {
   let T = null;
   const { h, m, ps, audit, arm } = setup({ seed: 1502, grants: (ctx) => { ctx.grantChess(T); } });
   T = plainChess(m);
@@ -113,7 +114,7 @@ test('a chess still in temp at the next deadline is sold back: its pool copy ret
   h.sched.advance(m.deadline - h.sched.now() + 1);
   assert.notEqual(m.phase, PHASE.PREP);
   assert.ok(ps.tempEmpty);
-  assert.equal(m.pool.left(T), cap, 'copy back in the shared pool');
+  assert.equal(m.pool.left(T), cap, 'resolving a gift leaves purchase stock unchanged');
   checkInvariants(m);
   assert.deepEqual(audit.violations, [], audit.violations.join('\n'));
   m.dispose();

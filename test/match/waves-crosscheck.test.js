@@ -162,26 +162,26 @@ test('联防 timing (decoded _CalculateActionPredelayConsiderUid): step = min(ma
   const W = host.count * host.interval;
   const times = (w, owner) => w.spawns.filter((s) => s.sourcePlayerId === owner).map((s) => s.time);
   // M = 2 ⇒ 40/2 = 20 s, capped at 5 s (the old code spread a lone owner's 2 leaks 20 s apart)
-  let w = buildUniteWave(gd, [leak('a'), leak('b'), leak('a')], 1, 60);
+  let w = buildUniteWave(gd, [leak('a'), leak('b'), leak('a')], 1, 1000);
   assert.deepEqual(times(w, 'a'), [host.time, host.time + 5]);
   assert.deepEqual(times(w, 'b'), [host.time + 0.5]);
   // the step uses the LARGEST owner group for every owner of the action: a 12, b 2 ⇒ 40/12 for both
   const many = [];
   for (let i = 0; i < 12; i++) many.push(leak('a'));
   many.push(leak('b'), leak('b'));
-  w = buildUniteWave(gd, many, 1, 60);
+  w = buildUniteWave(gd, many, 1, 1000);
   const step = Math.min(Math.max(W / 12, 0.05 * W), 5);
   assert.ok(times(w, 'a').every((t, i) => Math.abs(t - (host.time + i * step)) < 1e-9));
   assert.ok(times(w, 'b').every((t, i) => Math.abs(t - (host.time + 0.5 + i * step)) < 1e-9), 'b steps by 40/12, not 40/2 capped');
   // 25 leaks of one owner: the 0.05·W floor (2 s)
-  w = buildUniteWave(gd, Array.from({ length: 25 }, () => leak('a')), 1, 60);
+  w = buildUniteWave(gd, Array.from({ length: 25 }, () => leak('a')), 1, 1000);
   assert.equal(times(w, 'a')[24], host.time + 24 * 2);
   // owner offsets are not capped: the 12th owner starts 5.5 s after the action
-  w = buildUniteWave(gd, Array.from({ length: 12 }, (_, i) => leak(`o${i}`)), 1, 60);
+  w = buildUniteWave(gd, Array.from({ length: 12 }, (_, i) => leak(`o${i}`)), 1, 1000);
   assert.equal(times(w, 'o11')[0], host.time + 5.5);
   assert.ok(w.spawns.every((s) => s.actionIndex === tpl.spawns.indexOf(host) && s.routeIndex === host.routeIndex));
   // flyers and walkers are separate actions (each with its own M and owner order)
-  w = buildUniteWave(gd, [leak('a', 'enemy_1005_yokai'), leak('b'), leak('b')], 1, 60);
+  w = buildUniteWave(gd, [leak('a', 'enemy_1005_yokai'), leak('b'), leak('b')], 1, 1000);
   const fh = tpl.spawns.find((s) => s.key === TS.NF);
   assert.deepEqual(times(w, 'a'), [fh.time], 'owner a is the first owner of the flyer action');
   assert.deepEqual(times(w, 'b'), [host.time, host.time + 5], 'owner b is the first owner of the walker action');

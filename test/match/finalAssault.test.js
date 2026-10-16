@@ -10,7 +10,7 @@ import { createRng } from '../../server/sim/rng.js';
 
 const bossFields = () => FakeBattle.instances.filter((b) => b.kind === 'boss' || b.kind === 'hidden');
 
-test('pairing is seeded, independent of input order, includes everyone once and can draw every partner', () => {
+test('pairing follows seat order, independent of input order, and includes everyone once', () => {
   const p = (seat) => ({ seat, playerId: `s${seat}` });
   const partners = new Set(), lone = new Set();
   for (let seed = 1; seed <= 64; seed++) for (const n of [1, 2, 3, 4]) {
@@ -22,17 +22,17 @@ test('pairing is seeded, independent of input order, includes everyone once and 
     if (n === 4) partners.add(groups.find(g => g.some(x => x.seat === 0)).find(x => x.seat !== 0).seat);
     if (n === 3) lone.add(groups.find(g => g.length === 1)[0].seat);
   }
-  assert.deepEqual([...partners].sort(), [1, 2, 3]);
-  assert.deepEqual([...lone].sort(), [0, 1, 2]);
+  assert.deepEqual([...partners].sort(), [1]);
+  assert.deepEqual([...lone].sort(), [2]);
 });
 
-test('previous boss partners and sides persist; only orphaned survivors form a new pair', () => {
+test('boss pairs are recomputed in seat order when players leave', () => {
   const all = [0, 1, 2, 3].map(seat => ({ seat, playerId: `s${seat}` }));
   const previous = [['s3', 's0'], ['s2', 's1']];
   const ids = groups => groups.map(g => g.map(p => p.playerId));
-  assert.deepEqual(ids(pairPlayers(all, createRng(99), previous)), previous);
-  assert.deepEqual(ids(pairPlayers(all.filter(p => p.seat !== 0), createRng(99), previous)), [['s2', 's1'], ['s3']]);
-  assert.deepEqual(ids(pairPlayers(all.filter(p => p.seat > 1), createRng(99), previous)), [['s3', 's2']]);
+  assert.deepEqual(ids(pairPlayers(all, createRng(99), previous)), [['s0', 's1'], ['s2', 's3']]);
+  assert.deepEqual(ids(pairPlayers(all.filter(p => p.seat !== 0), createRng(99), previous)), [['s1', 's2'], ['s3']]);
+  assert.deepEqual(ids(pairPlayers(all.filter(p => p.seat > 1), createRng(99), previous)), [['s2', 's3']]);
 });
 
 test('boss preview, actual fields and Hidden Core retain one per-match draw', () => {
@@ -64,14 +64,14 @@ test('boss pool = bloodPoint[difficulty] × the players alive at the fight\'s st
   const gd = new GameData(RAW, 'mode_multi_hard');
   for (const n of [1, 2, 3, 4]) assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000 * n, `${n} alive`);
   assert.equal(bossPoolHp(gd, 'boss_1'), 1800000 * 4, 'no count given: a full team');
-  assert.equal(bossPoolHp(gd, 'boss_1', 9), 1800000 * 4, 'at most aliveFull (4) players');
+  assert.equal(bossPoolHp(gd, 'boss_1', 8), 1800000 * 8, 'eight alive players scale the pool');
   assert.equal(gd.bossPoolHp('boss_1', 2), bossPoolHp(gd, 'boss_1', 2), 'GameData agrees');
   assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_abyss'), 'boss_5', 1), 3000000, 'solo: the table value');
   assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_funny'), 'boss_2', 1), 225000);
   // the flip back: the fixed pool of 0.1.x (perPlayer false; solo 0.25), and its optional × alive / 4 (aliveScaling)
   const withScale = (over) => ({ ...RAW, config: { ...RAW.config, bossHpScale: { ...RAW.config.bossHpScale, ...over } } });
   const fixed = withScale({ perPlayer: false, solo: 0.25 });
-  for (const n of [4, 3, 2, 1, undefined, 9]) assert.equal(bossPoolHp(new GameData(fixed, 'mode_multi_hard'), 'boss_1', n), 1800000, `fixed pool, ${n} alive`);
+  for (const n of [4, 3, 2, 1, undefined]) assert.equal(bossPoolHp(new GameData(fixed, 'mode_multi_hard'), 'boss_1', n), 1800000, `fixed pool, ${n} alive`);
   assert.equal(bossPoolHp(new GameData(fixed, 'mode_single_abyss'), 'boss_5', 1), 750000);
   assert.equal(bossPoolHp(new GameData(fixed, 'mode_single_funny'), 'boss_2', 1), 56250);
   const scaled = new GameData(withScale({ perPlayer: false, aliveScaling: true }), 'mode_multi_hard');
@@ -80,7 +80,7 @@ test('boss pool = bloodPoint[difficulty] × the players alive at the fight\'s st
   assert.equal(bossPoolHp(scaled, 'boss_1', 2), 900000);
   assert.equal(bossPoolHp(scaled, 'boss_1', 1), 450000);
   assert.equal(bossPoolHp(scaled, 'boss_1'), 1800000, 'no count given: a full team');
-  assert.equal(bossPoolHp(scaled, 'boss_1', 9), 1800000, 'never above the data value');
+  assert.equal(bossPoolHp(scaled, 'boss_1', 8), 3600000, 'large rooms scale the fixed four-player share');
   // a mode's own entry overrides the global one
   const perMode = { ...RAW, config: { ...RAW.config, modes: { ...RAW.config.modes, mode_multi_hard: { ...RAW.config.modes.mode_multi_hard, bossHpScale: { ...RAW.config.modes.mode_multi_hard.bossHpScale, perPlayer: false } } } } };
   assert.equal(bossPoolHp(new GameData(perMode, 'mode_multi_hard'), 'boss_1', 3), 1800000, 'the mode entry first');
