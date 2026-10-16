@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPlan, VOICE_JP_LANG } from '../tools/assets/plan.mjs';
-import { indexAudio, VOICE_DIRS } from '../tools/assets/audio.mjs';
+import { indexAudio, VOICE_DIRS, VOICE_BATTLE_SLOTS } from '../tools/assets/audio.mjs';
 import { RAW } from '../tools/assets/sources.mjs';
 import { artPlan, FULL_ZIP_JP_VOICE, JP_VOICE_DIR, FULL_ZIP_OPTIONAL_VOICE, OPTIONAL_VOICE_DIRS } from '../tools/package.mjs';
 import { DEFAULT_SETTINGS, VOICE_LANGS, sanitizeSettings } from '../public/js/ui/gameLogic.js';
@@ -62,25 +62,38 @@ test('plan: audio.voiceJp is the JP dub (ArknightsAssets2 voice/) of the very sl
   assert.ok(plan({ voiceSlots: null }).audio.voiceJp.char_263_skadi.gacha);
 });
 
-test('data/assets.json: voiceJp gives every voiced operator the JP twin of each Chinese line (192 operators, 2688 files); stand-ins, 盟约·辅助干员 and summons have neither', () => {
+test('data/assets.json: every voiced operator has complete JP battle lines, including collaboration operators without a Chinese dub', () => {
   const m = readJson('data/assets.json');
   const cn = m.audio.voice;
   const jp = m.audio.voiceJp;
   assert.ok(jp && typeof jp === 'object', 'the manifest carries the JP tree');
-  assert.deepEqual(Object.keys(jp), Object.keys(cn), 'the same operators');
+  const backups = readJson('data/backups.json');
+  const standIns = Object.entries(backups.units).filter(([, u]) => Array.isArray(u.standsIn) ? u.standsIn.length : u.standsIn).map(([id]) => id);
+  const silent = new Set([...standIns, 'char_616_pithst']);
+  const voiced = Object.keys(m.chars).filter(id => !silent.has(id));
+  const jpOnly = new Set(['char_456_ash', 'char_4123_ela', 'char_4141_marcil', 'char_4182_oblvns', 'char_4217_makoto']);
+  assert.deepEqual(Object.keys(jp).sort(), voiced.sort(), 'every fieldable voiced operator has its Japanese dub');
+  assert.deepEqual(Object.keys(cn).sort(), voiced.filter(id => !jpOnly.has(id)).sort(), 'only the five JP-only collaboration operators lack a Chinese dub');
   assert.equal(m.stats.voiceJpChars, Object.keys(jp).length);
   assert.equal(m.stats.voiceChars, Object.keys(cn).length);
-  assert.equal(Object.keys(jp).length, 192);
-  // the JP tree is the Chinese one with the folder swapped: same slots, same lines in the same order, same file names
-  assert.deepEqual(JSON.parse(JSON.stringify(cn).replaceAll('/assets/audio/voice/cn/', '/assets/audio/voice/jp/')), jp);
+  // Each available Chinese dub has the same slots, line order and file names as its Japanese counterpart.
+  for (const [id, tree] of Object.entries(cn)) {
+    assert.deepEqual(JSON.parse(JSON.stringify(tree).replaceAll('/assets/audio/voice/cn/', '/assets/audio/voice/jp/')), jp[id], id);
+  }
   const lines = [];
   const walk = (x) => { if (typeof x === 'string') lines.push(x); else if (Array.isArray(x)) x.forEach(walk); else if (x && typeof x === 'object') Object.values(x).forEach(walk); };
   walk(jp);
-  assert.equal(lines.length, 2688);
+  for (const [id, tree] of Object.entries(jp)) {
+    assert.deepEqual(Object.keys(tree).sort(), [...VOICE_BATTLE_SLOTS].sort(), `${id}: all battle slots`);
+    for (const slot of VOICE_BATTLE_SLOTS) {
+      const values = Array.isArray(tree[slot]) ? tree[slot] : [tree[slot]];
+      assert.equal(values.length, slot === 'select' || slot === 'place' ? 2 : 1, `${id}.${slot}: official line count`);
+      for (const url of values) assert.ok(url.includes(`/${id}/`), `${id}.${slot}: its own voice bank`);
+    }
+  }
+  assert.equal(lines.length, voiced.length * (VOICE_BATTLE_SLOTS.length + 2), 'two select/place lines and one line in every other battle slot');
   for (const u of lines) assert.match(u, /^\/assets\/audio\/voice\/jp\/char_[^/]+\/cn_\d+\.mp3$/);
   // no voice: the 17 stand-ins of data/backups.json (预备干员 / 原型干员), the mode's 盟约·辅助干员, every summon
-  const backups = readJson('data/backups.json');
-  const standIns = Object.entries(backups.units).filter(([, u]) => Array.isArray(u.standsIn) ? u.standsIn.length : u.standsIn).map(([id]) => id);
   assert.equal(standIns.length, 17);
   for (const id of [...standIns, 'char_616_pithst', ...Object.keys(readJson('data/tokens.json'))]) {
     assert.equal(jp[id], undefined, `${id}: no JP line`);
