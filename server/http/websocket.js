@@ -62,8 +62,10 @@ export function createSessionStack(opts, { data, log, content = null, plugins = 
   const netOptions = netOptionsFrom(opts);
   const registry = new SessionRegistry({ reconnectWindowMs: netOptions.reconnectWindowMs ?? NET_DEFAULTS.reconnectWindowMs });
   const lobbyOptions = lobbyOptionsFrom(opts);
-  const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn, content, plugins, hosts, options: lobbyOptions });
-  const network = new Network({ registry, handler: lobby, log, options: netOptions });
+  let network;
+  const lobby = new Lobby({ registry, log, MatchClass: opts.MatchClass, getData: () => data, seedFn: opts.seedFn,
+    content, plugins, hosts, sockets: () => network?.connectionCount ?? 0, options: lobbyOptions });
+  network = new Network({ registry, handler: lobby, log, options: netOptions });
   return { registry, lobby, network };
 }
 

@@ -84,6 +84,8 @@ export const initialState = Object.freeze({
   session: { entered: false },
   room: null,
   match: emptyMatch(),
+  queue: { waiting: false, difficulty: null, count: 0, total: 0, waitedMs: 0, minSeats: 0, seats: 0, matched: null },
+  presence: { online: null, inRoom: null, via: null },
   ticker: [],
   emotes: [],
   clock: { offset: 0, rtt: null, synced: false },

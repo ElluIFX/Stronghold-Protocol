@@ -4,12 +4,18 @@
 // Rules (the choices where DESIGN is silent are marked ▸):
 //   * Rooms are keyed by 4-letter codes from an unambiguous alphabet (no I/O, letters only). Join codes are
 //     case-insensitive.
-//   * 'solo' rooms hold exactly one human and never bots. 'coop' rooms have 4 seats (humans + AI bots).
-//     Humans and bots take the lowest free seat index; seat indexes never compact.
+//   * 'solo' rooms hold exactly one human and never bots (one seat). 'coop' rooms have `capacity` seats (humans + AI
+//     bots): DEFAULT_SEATS (4, the official room) unless room.create asks for more, at most MAX_SEATS (8; 5–8 seats are a
+//     remake extension, owner's decision). Humans and bots take the lowest free seat index; seat indexes never compact
+//     (except when the host shrinks the room, below).
+//   * room.setCapacity {capacity} (host, LOBBY only, co-op only): the room gets `capacity` seats (DEFAULT_SEATS..MAX_SEATS),
+//     never fewer than its occupied seats (BAD_TARGET). ▸ Shrinking moves the members seated at an index ≥ capacity to
+//     the lowest free seats, in seat order; nobody is un-readied (the seat count decides nothing of the match — its
+//     players do). room.state carries `capacity` (= seats.length).
 //   * ▸ Being in a LOBBY room and sending room.create / room.join implicitly leaves it. While your room is
 //     in a match, create/join of another room fails with ROOM_STARTED (send g.leave or room.leave first).
-//   * Host-only: room.setDifficulty, room.setAiPicksLast, room.addBot, room.removeBot, room.kick, room.start.
-//     ▸ Changing the difficulty or the AI-picks-last option (co-op only) un-readies the other humans.
+//   * Host-only: room.setDifficulty, room.setCapacity, room.setAiPicksLast, room.addBot, room.removeBot, room.kick,
+//     room.start. ▸ Changing the difficulty or the AI-picks-last option (co-op only) un-readies the other humans.
 //     ▸ room.start requires every other human to be connected and ready; the host's start counts as the host's
 //     ready (the host may still toggle room.ready for display).
 //   * room.kick {seat, playerId} (community report #17, owner approved): before the match only, the host removes another
@@ -143,7 +149,7 @@
 //     ends with summary.reason 'plugin-crash' | 'plugin-hang' | 'plugin-start' and the room is back in its lobby.
 //   * Spectator seats (community report #26, owner's decision 2026-10-04 — a remake feature, the official room has none):
 //     room.spectate { code } takes one of a co-op room's MAX_SPECTATORS (2) spectator seats, in its lobby or while its
-//     match runs (▸ solo rooms: ROOM_FULL). A spectator is not a player: never in `seats`, never counted for the 1–4 players
+//     match runs (▸ solo rooms: ROOM_FULL). A spectator is not a player: never in `seats`, never counted for the players
 //     or the start gate, never host, never keeps a room alive (a room whose last human leaves closes with room.closed
 //     {empty} for its spectators). It receives room.state (`spectators: [{ playerId, name, connected }]`) and every match
 //     broadcast (m.public, m.ticker, m.emote, b.pool — public data); the match registers it (opts.spectators /
@@ -153,9 +159,17 @@
 //     time → room.closed {kicked} to it. A spectator in a LOBBY room may take a free player seat with room.join of the same
 //     code; a player never switches to spectating in place (ALREADY). Disconnect / grace / reconnect / expiry work as for
 //     a player seat (the seat is kept and given back on resume).
+//   * 在线人数 (presence counters — a remake addition, ported from Jerryzhu1234510's fork, 4f4e848f; the owner's decision
+//     of 2026-10-08): `presence { online, inRoom }` — `online` = the live sockets (pages with the game open, the title
+//     screen's hello-less socket included), `inRoom` = the humans holding a seat plus the spectators. Sent right after
+//     every `welcome` (onHello) and then by an unref'd clock every `presenceTickMs` to every connected session whose last
+//     numbers differ (`session.presenceSent`: a hello that caught a passing count, or a congested socket that skipped a
+//     push, is corrected at the next tick — never the same numbers twice). /healthz carries the same two numbers
+//     (server/http/routes.js) for a page without a session.
+//     Only a lobby given a live socket counter sends presence frames and starts the clock.
 
 import { randomBytes, randomInt } from 'node:crypto';
-import { DIFFICULTIES, ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
+import { DIFFICULTIES, ERR, MAX_SEATS, DEFAULT_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
 import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges } from '../shared/protocol.js';
 import { encode, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
@@ -177,13 +191,30 @@ export const LOBBY_DEFAULTS = Object.freeze({
   maxMatchesPerAddr: 8,   // matches started from one client network that may run at once (0 = unlimited)
   resyncMinGapMs: 1000,   // heavy resyncs (match state / result replay) per session at most this often on repeated hellos
   soloReconnectWindowMs: null, // a dropped solo run stays resumable this long (null = data singleReconnectTime, 24 h)
+  // 匹配 (matchmaking queue, a remake feature; DESIGN §0 listed it out of scope for v1):
+  queueTickMs: 1000,      // how often the queue is re-examined
+  queueMinSeats: 2,       // humans a group needs before it may start (the rest of the 4 seats get AI teammates)
+  queueGraceMs: 3000,     // a player waits at least this long for a second one before playing with AI teammates
+  queueTimeoutMs: 20_000, // …and at most this long, so a lone player is never stuck in the queue
+  queueSilentMs: 45_000,  // a waiting session that stopped answering is dropped (it never joined on purpose)
+  // 在线人数 (presence counters, a remake addition): how often the numbers are re-checked and pushed when they changed
+  // (0 = only the frame that answers each hello). Used only by a lobby that counts presence (the `sockets` option).
+  presenceTickMs: 5000,
 });
 
 /** Official `singleReconnectTime` (s) when the data lacks it (constData, research 01 §1). */
 export const SOLO_RECONNECT_FALLBACK_SEC = 86_400;
 
-/** Display names for AI teammates (the tutorial NPCs first, then a few familiar faces). */
-export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·惊蛰', 'AI·杜宾', 'AI·凯尔希', 'AI·可露希尔']); // i18n-ignore: player names (docs/I18N.md)
+/**
+ * Display names for AI teammates (the tutorial NPCs first, then a few familiar faces), in the order bots get them: enough
+ * for the MAX_SEATS − 1 bots of the largest room. Each name matches an operator (chess) or a strategy (band), which is the
+ * bot's portrait (public/js/screens/room.js, ui/gameComponents.js PlayerAvatar; test/lobby.test.js checks every one has
+ * art). The first three never change (a 4-seat room names its ≤ 3 bots as before).
+ */
+export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·惊蛰', 'AI·杜宾', 'AI·德克萨斯', 'AI·银灰', 'AI·能天使', 'AI·陈']); // i18n-ignore: player names (docs/I18N.md)
+
+/** A co-op room's seat count from a requested capacity: DEFAULT_SEATS..MAX_SEATS (anything else ⇒ DEFAULT_SEATS). */
+export const coopCapacity = (capacity) => (Number.isInteger(capacity) && capacity >= DEFAULT_SEATS && capacity <= MAX_SEATS ? capacity : DEFAULT_SEATS);
 
 const OK = Object.freeze({ ok: true });
 const fail = (code, detail) => (detail ? { error: code, detail } : { error: code });
@@ -236,10 +267,13 @@ function freezeDiy(picks) {
   return Object.freeze(out);
 }
 
-/** One room: 4 seat slots, host, difficulty, optional running match. */
+/** One room: its seat slots (co-op: `capacity`, solo: 1), host, difficulty, optional running match. */
 export class Room {
-  /** @param {string} code @param {'solo'|'coop'} mode @param {string} difficulty @param {number} now */
-  constructor(code, mode, difficulty, now) {
+  /**
+   * @param {string} code @param {'solo'|'coop'} mode @param {string} difficulty @param {number} now
+   * @param {number} [capacity] co-op seats (coopCapacity; DEFAULT_SEATS when absent); a solo room has one
+   */
+  constructor(code, mode, difficulty, now, capacity = DEFAULT_SEATS) {
     this.code = code;
     this.mode = mode;
     this.difficulty = difficulty;
@@ -250,8 +284,11 @@ export class Room {
     this.aiPicksLast = false;
     /** @type {string | null} */
     this.hostId = null;
-    /** @type {(Seat | null)[]} */
-    this.seats = new Array(MAX_SEATS).fill(null);
+    /**
+     * One slot per seat: seats.length is the room's capacity.
+     * @type {(Seat | null)[]}
+     */
+    this.seats = new Array(mode === 'solo' ? 1 : coopCapacity(capacity)).fill(null);
     /** @type {{ playerId: string, name: string, connected: boolean }[]} spectator seats, ≤ MAX_SPECTATORS (header) */
     this.spectators = [];
     /** @type {any} running Match instance */
@@ -300,6 +337,26 @@ export class Room {
   /** @param {string} playerId @returns {{ playerId: string, name: string, connected: boolean } | null} */
   spectatorOf(playerId) { return this.spectators.find((s) => s.playerId === playerId) || null; }
 
+  /** The room's player seats: a solo room's one, a co-op room's `seats.length`. */
+  get capacity() { return this.mode === 'solo' ? 1 : this.seats.length; }
+
+  /**
+   * Resize a co-op room to `capacity` seats (room.setCapacity; the caller checks the range and that the occupied seats
+   * fit): members seated at an index ≥ capacity move to the lowest free seats, in seat order.
+   * @param {number} capacity
+   */
+  resize(capacity) {
+    const seats = this.seats.slice(0, capacity);
+    while (seats.length < capacity) seats.push(null);
+    for (const s of this.seats.slice(capacity)) {
+      if (!s) continue;
+      const i = seats.indexOf(null);
+      seats[i] = s;
+      s.seat = i;
+    }
+    this.seats = seats;
+  }
+
   /** Lowest free seat index, or -1. */
   freeSeat() { return this.seats.indexOf(null); }
 
@@ -314,6 +371,8 @@ export class Room {
       hostId: this.hostId,
       mode: this.mode,
       difficulty: this.difficulty,
+      // the room's player seats (= seats.length): co-op DEFAULT_SEATS..MAX_SEATS, solo 1
+      capacity: this.capacity,
       aiPicksLast: this.aiPicksLast,
       inMatch: !!this.match,
       seats: this.seats.map((s) => (s
@@ -344,6 +403,7 @@ export class Lobby {
    *     unofficial?: () => number, defaults?: () => string[], dataOf?: (cs: string) => any, kittedOf?: (cs: string) => any,
    *     contentInUse?: () => number } | null,
    *   hosts?: { create: (cs: string, opts: object) => any, stats?: () => object } | null,
+   *   sockets?: (() => number) | null,
    *   options?: Partial<typeof LOBBY_DEFAULTS>,
    * }} opts
    *   content: the server's vanilla content (server/plugins/identity.js; header "Content identity"); plugins: what a host
@@ -351,7 +411,7 @@ export class Lobby {
    *   plugins", "Gameplay plugins"); hosts: the match hosts a room with gameplay plugins runs its match in
    *   (server/match/host/index.js; none: such a match runs here, unit tests)
    */
-  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, content = null, plugins = null, hosts = null, options = {} }) {
+  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, content = null, plugins = null, hosts = null, sockets = null, options = {} }) {
     this.registry = registry;
     /** the vanilla content set every room plays (header "Content identity"), or null */
     this.vanilla = content && isContentHash(content.cs) ? Object.freeze({ cs: content.cs, vanilla: true, plugins: Object.freeze([]) }) : null;
@@ -364,6 +424,14 @@ export class Lobby {
     this.getData = getData;
     this.now = now;
     this.seedFn = seedFn || (() => randomInt(2 ** 32));
+    /**
+     * 在线人数: the live socket count (the Node server passes `network.connectionCount`), the "online" half of
+     * presence(). Passed as a closure and read lazily — the network is built after the lobby (it takes the lobby as its
+     * handler). It also switches the presence frames on (presenceOn): a lobby without it (a unit test's bare lobby) sends
+     * no presence frame and never starts the presence clock.
+     * @type {(() => number) | null}
+     */
+    this.sockets = typeof sockets === 'function' ? sockets : null;
     this.opts = { ...LOBBY_DEFAULTS, ...options };
     /** @type {Map<string, Room>} */
     this.rooms = new Map();
@@ -371,6 +439,23 @@ export class Lobby {
     this.graceTimers = new Map();
     /** @type {Map<string, NodeJS.Timeout>} deferred (coalesced) resyncs by playerId */
     this.resyncTimers = new Map();
+    /**
+     * 匹配 queue (matchmaking): the sessions waiting for a group, oldest first.
+     * @type {{ playerId: string, session: any, difficulty: string, since: number }[]}
+     */
+    this.queue = [];
+    /**
+     * @type {NodeJS.Timeout | null} the queue's own clock (unref'd: it never keeps the process alive). It runs only while
+     * somebody waits (started by queueJoin, stopped by the tick that empties the queue): an idle lobby — and every room
+     * Durable Object of the Worker, which holds a lobby of one room — keeps no timer, so it can sleep.
+     */
+    this.queueTimer = null;
+    /** @type {NodeJS.Timeout | null} the presence clock (unref'd), started by the first hello of a counting lobby */
+    this.presenceTimer = null;
+    /** @type {string | null} the counters last pushed (JSON): the clock pushes only a change */
+    this.presenceJson = null;
+    /** a session may hold other numbers than presenceJson (a hello's passing count, a skipped push): the next push checks each */
+    this.presenceBehind = false;
     /** per-network limit warnings: at most one log line per 10 s (the rest are counted) */
     this.limitLog = { at: -Infinity, suppressed: 0 };
     /** log lines said once (warnOnce) */
@@ -460,7 +545,84 @@ export class Lobby {
       for (const s of r.seats) if (s && !s.left) (s.isBot ? bots++ : humans++);
       spectators += r.spectators.length;
     }
-    return { rooms: this.rooms.size, matches, humans, bots, spectators };
+    // `queued`: sessions waiting in the 匹配 queue right now (matchmaking)
+    return { rooms: this.rooms.size, matches, humans, bots, spectators, queued: this.queue.length };
+  }
+
+  // ---------------------------------------------------------------------------------------------------
+  // 在线人数 (presence counters) — a remake addition, ported from Jerryzhu1234510's fork (4f4e848f)
+  // ---------------------------------------------------------------------------------------------------
+
+  /** Whether this lobby pushes presence frames: it was given the live socket count (`sockets`, constructor). */
+  get presenceOn() { return !!this.sockets; }
+
+  /**
+   * The counters the client shows next to the version (title footer, lobby top bar; public/js/ui/presence.js) and
+   * /healthz carries: `online` = the pages with the game open (the live sockets — a visitor still on the title screen
+   * has one but no session yet, and counts), `inRoom` = the humans holding a seat plus the spectators.
+   * Without a socket count (a bare lobby) `online` falls back to the connected sessions.
+   * @returns {{ online: number, inRoom: number }}
+   */
+  presence() {
+    let online = 0;
+    if (this.sockets) online = Math.max(0, this.sockets() | 0);
+    else for (const s of this.registry.all()) if (s.connected) online++;
+    const st = this.stats();
+    return { online, inRoom: st.humans + st.spectators };
+  }
+
+  /**
+   * Push `presence` to every connected session whose last numbers (`session.presenceSent`) differ from the counters now
+   * — nothing when they did not change since the last push and every session got them (`force` re-sends to every
+   * session). A lobby without presence frames (presenceOn) sends nothing.
+   * @param {boolean} [force]
+   * @returns {boolean} whether a frame went out
+   */
+  broadcastPresence(force = false) {
+    if (!this.presenceOn) return false;
+    const p = this.presence();
+    const json = JSON.stringify(p);
+    if (!force && json === this.presenceJson && !this.presenceBehind) return false;
+    this.presenceJson = json;
+    this.presenceBehind = false;
+    const frame = encode({ t: 'presence', ...p });
+    let out = false;
+    for (const session of this.registry.all()) {
+      if (!session.connected || (!force && session.presenceSent === json)) continue;
+      // droppable: a socket that is already congested skips it (the counters are a convenience, never game state) —
+      // and gets the numbers at a later push
+      if (sendRaw(session.ws, frame, { droppable: true })) { session.presenceSent = json; out = true; } else this.presenceBehind = true;
+    }
+    return out;
+  }
+
+  /**
+   * Answer a hello with the counters as they are now; the clock pushes the changes after it. When they differ from the
+   * last push (they moved and may come back before the next tick), the next tick checks every session.
+   */
+  sendPresence(session) {
+    if (!this.presenceOn) return;
+    try {
+      const p = this.presence(), json = JSON.stringify(p);
+      if (sendSession(session, { t: 'presence', ...p })) session.presenceSent = json; else this.presenceBehind = true;
+      if (json !== this.presenceJson) this.presenceBehind = true;
+    } catch (e) { this.log.error('[presence] hello frame failed', e); }
+    this.startPresenceClock();
+  }
+
+  /** Start the presence clock (idempotent; none with `presenceTickMs` 0; unref'd: it never keeps the process alive). */
+  startPresenceClock() {
+    if (this.presenceTimer || !this.presenceOn || !(this.opts.presenceTickMs > 0)) return;
+    this.presenceTimer = setInterval(() => {
+      try { this.broadcastPresence(); } catch (e) { this.log.error('[presence] tick failed', e); }
+    }, this.opts.presenceTickMs);
+    this.presenceTimer.unref?.();
+  }
+
+  stopPresenceClock() {
+    if (!this.presenceTimer) return;
+    clearInterval(this.presenceTimer);
+    this.presenceTimer = null;
   }
 
   // ---------------------------------------------------------------------------------------------------
@@ -473,6 +635,8 @@ export class Lobby {
    * @param {{ resumed: boolean, repeat: boolean }} info
    */
   onHello(session, { resumed, repeat }) {
+    // 在线人数: every hello is answered with the counters (a lobby that counts presence only, see presenceOn)
+    this.sendPresence(session);
     if (!resumed && !repeat) return;
     const room = this.roomOf(session);
     if (!room) {
@@ -580,6 +744,7 @@ export class Lobby {
       case 'room.leave': return this.leave(session);
       case 'room.ready': return this.ready(session, msg);
       case 'room.setDifficulty': return this.setDifficulty(session, msg);
+      case 'room.setCapacity': return this.setCapacity(session, msg);
       case 'room.setAiPicksLast': return this.setAiPicksLast(session, msg);
       case 'room.addBot': return this.addBot(session);
       case 'room.removeBot': return this.removeBot(session, msg);
@@ -596,6 +761,8 @@ export class Lobby {
       case 'room.setMode': return this.setMode(session, msg);
       case 'room.contentReady': return this.contentReady(session, msg, ctx);
       case 'room.consent': return this.consent(session,msg);
+      case 'queue.join': return this.queueJoin(session, msg);
+      case 'queue.leave': return this.queueLeave(session);
       default:
         if (typeof msg.t === 'string' && msg.t.startsWith('g.')) return this.routeGameNow(session, msg);
         return fail(ERR.BAD_MSG, `unhandled type ${String(msg.t).slice(0, 32)}`);
@@ -605,6 +772,8 @@ export class Lobby {
   /** The session's socket closed. @param {import('./net.js').Session} session */
   onDisconnect(session) {
     this.clearResync(session.playerId); // the next resume resyncs immediately
+    // 匹配: a waiting session that dropped is dropped from the queue too (a queued player must be reachable to be seated)
+    if (this.queued(session)) { this.queueLeave(session); this.broadcastQueue(); }
     const room = this.roomOf(session);
     // a solo run may be resumed within singleReconnectTime (24 h); everything else keeps the registry's window
     session.resumeWindowMs = room && room.match && room.mode === 'solo' ? this.soloResumeWindowMs() : null;
@@ -654,6 +823,9 @@ export class Lobby {
     this.offStale = null;
     this.offContentStale = null;
     for (const room of [...this.rooms.values()]) this.disposeRoom(room, reason);
+    this.stopQueueClock();
+    this.stopPresenceClock();
+    this.queue = [];
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
     for (const t of this.resyncTimers.values()) clearTimeout(t);
@@ -661,10 +833,194 @@ export class Lobby {
   }
 
   // ---------------------------------------------------------------------------------------------------
+  // 匹配 (matchmaking queue) — a remake feature
+  // ---------------------------------------------------------------------------------------------------
+
+  /**
+   * queue.join { difficulty }: wait for other players instead of hand-sharing a 4-letter key. The queue is re-examined
+   * every `queueTickMs`; a group is formed from the waiting sessions (the oldest entry's difficulty first) once it can
+   * seat `queueMinSeats` humans and either everybody waited `queueGraceMs` or the oldest one waited `queueTimeoutMs`.
+   * Every group gets a NEW 同盟 room (the members are seated through the same path as room.join) and the seats the queue
+   * could not fill are left to the room's own 「添加 AI 队友」 / auto-fill, announced with queue.matched.
+   */
+  queueJoin(session, { difficulty }) {
+    // A deployment can explicitly disable matchmaking by disabling its queue clock.
+    if (!(this.opts.queueTickMs > 0)) return fail(ERR.BAD_MSG, 'matchmaking is not available here');
+    const cur = this.roomOf(session);
+    if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
+    this.queueLeave(session, { quiet: true });
+    // a session already waiting for its lobby grace (a reconnect) is not a second entry
+    this.queue.push({ playerId: session.playerId, session, difficulty, since: this.now() });
+    this.startQueueClock();
+    this.queueTick();
+    this.sendQueueState(session);
+    this.log.info(`[queue] ${session.name} joined (${difficulty}); ${this.queue.length} waiting`);
+    return OK;
+  }
+
+  /**
+   * queue.leave: stop waiting. Never an error when the session was not queued (the client sends it on unload too), and it
+   * always answers with the resulting `queue.status` — a client that cancelled must not be left waiting for a frame.
+   * @param {any} session @param {{ quiet?: boolean }} [opts]
+   */
+  queueLeave(session, { quiet = false } = {}) {
+    const before = this.queue.length;
+    this.queue = this.queue.filter((e) => e.playerId !== session.playerId);
+    if (!quiet && before !== this.queue.length) this.log.info(`[queue] ${session.name} left; ${this.queue.length} waiting`);
+    this.sendQueueState(session);
+    return OK;
+  }
+
+  /** The queue entry of a session, or null. */
+  queued(session) {
+    return this.queue.find((e) => e.playerId === session.playerId) || null;
+  }
+
+  /** `queue.status` frame for one session (waiting:false when it is not in the queue). */
+  queueStateOf(session) {
+    const e = this.queued(session);
+    if (!e) return { t: 'queue.status', waiting: false, difficulty: null, count: 0, waitedMs: 0 };
+    const same = this.queue.filter((x) => x.difficulty === e.difficulty).length;
+    return {
+      t: 'queue.status', waiting: true, difficulty: e.difficulty,
+      count: same, total: this.queue.length,
+      waitedMs: Math.max(0, this.now() - e.since),
+      minSeats: this.opts.queueMinSeats, seats: DEFAULT_SEATS, // a matched room is an official 4-seat 同盟 room
+    };
+  }
+
+  sendQueueState(session) {
+    try { sendSession(session, this.queueStateOf(session)); } catch (e) { this.log.error('[queue] sendQueueState failed', e); }
+  }
+
+  /** Notify every waiting session (a new entry, a departure, or a changed count). */
+  broadcastQueue() {
+    for (const e of [...this.queue]) this.sendQueueState(e.session);
+  }
+
+  /** Start the queue clock (idempotent). The interval is unref'd so it never keeps the process alive. */
+  startQueueClock() {
+    if (this.queueTimer || !(this.opts.queueTickMs > 0)) return;
+    this.queueTimer = setInterval(() => {
+      try { this.queueTick(); } catch (e) { this.log.error('[queue] tick failed', e); }
+    }, this.opts.queueTickMs);
+    this.queueTimer.unref?.();
+  }
+
+  stopQueueClock() {
+    if (!this.queueTimer) return;
+    clearInterval(this.queueTimer);
+    this.queueTimer = null;
+  }
+
+  /**
+   * One look at the waiting sessions: drop the ones that left / disconnected / went silent, then start every group that
+   * satisfies the rules. Starting a group removes its entries first, so a failure never leaves half a group behind.
+   */
+  queueTick() {
+    const now = this.now();
+    let removed = 0;
+    this.queue = this.queue.filter((e) => {
+      const s = this.registry.byId(e.playerId);
+      const ok = s && s === e.session && s.connected && this.roomOf(s) == null && now - e.since < this.opts.queueSilentMs;
+      if (!ok) removed++;
+      return ok;
+    });
+
+    // Walk the queue in arrival order. Each group takes the oldest entry, then as many later entries as share its
+    // difficulty and fit — a group of 4 is filled at once, a smaller one only once it is allowed to start.
+    const taken = new Set();
+    const groups = [];
+    for (const head of this.queue) {
+      if (taken.has(head.playerId)) continue;
+      const members = [head];
+      for (const e of this.queue) {
+        if (members.length >= DEFAULT_SEATS) break;
+        if (e === head || taken.has(e.playerId) || e.difficulty !== head.difficulty) continue;
+        members.push(e);
+      }
+      const waited = now - head.since;
+      // The grace runs from the LAST arrival, not from the head's own: a second player that is joining right now (its own
+      // queue.join is a round trip behind) must not be split off into a group of its own. A full group starts at once, and
+      // the hard timeout still guarantees a lone player a room.
+      const lastArrival = Math.max(head.since, ...this.queue.map((e) => e.since));
+      const ready = members.length >= DEFAULT_SEATS
+        || (members.length >= this.opts.queueMinSeats && now - lastArrival >= this.opts.queueGraceMs)
+        || waited >= this.opts.queueTimeoutMs;
+      if (!ready) continue;
+      for (const e of members) taken.add(e.playerId);
+      groups.push(members);
+    }
+
+    if (removed || groups.length) {
+      if (removed) this.log.info(`[queue] ${removed} waiting session(s) dropped`);
+      for (const members of groups) this.startQueuedMatch(members);
+      this.broadcastQueue();
+    }
+    // nobody waits any more (a member that could not be seated was put back above): the clock stops until the next join
+    if (!this.queue.length) this.stopQueueClock();
+  }
+
+  /**
+   * Put one formed group into a fresh 同盟 room. The room is created by the first member (its per-network room limit is
+   * the one that applies), the others join it, and every member is told its code. A member that cannot be seated is put
+   * back at the front of the queue (it keeps waiting rather than losing its place).
+   * @param {{ playerId: string, session: any, difficulty: string, since: number }[]} members
+   */
+  startQueuedMatch(members) {
+    for (const e of members) this.queue = this.queue.filter((x) => x.playerId !== e.playerId);
+    // Every matched human is ready by definition (it asked to be matched): set BEFORE the seats are announced, so the
+    // very first room.state a client sees already carries it (a client that auto-starts reads that frame).
+    const markReady = (room) => {
+      for (const s of room.seats) if (s && !s.isBot && !s.left) s.ready = true;
+      this.broadcastState(room);
+    };
+    const [first, ...rest] = members;
+    let room = null;
+    let failure = null;
+    try {
+      for (const e of members) {
+        if (!room) {
+          const res = this.create(e.session, { mode: 'coop', difficulty: first.difficulty });
+          if (res && res.error) { failure = res; break; }
+          room = this.roomOf(e.session);
+          if (!room) { failure = fail(ERR.INTERNAL, 'queue: no room after create'); break; }
+          room.matched = true; // the room was formed by 匹配 (queued players may leave it without the lobby grace)
+        } else if (this.roomOf(e.session) !== room) {
+          const res = this.placePlayer(room, e.session, this.roomOf(e.session));
+          if (res && res.error) {
+            // the room filled up meanwhile: this one keeps waiting for the next group
+            this.queue.unshift(e);
+            this.log.warn(`[queue] ${e.session.name} could not be seated in ${room.code}: ${res.error}`);
+          }
+        }
+      }
+    } catch (err) {
+      failure = fail(ERR.INTERNAL, err && err.message);
+      this.log.error('[queue] startQueuedMatch threw', err);
+    }
+    if (failure || !room) {
+      for (const e of members) if (!this.queued(e.session)) this.queue.unshift(e);
+      this.log.warn(`[queue] group of ${members.length} not started: ${failure ? failure.error : 'no room'}`);
+      this.broadcastQueue();
+      return;
+    }
+    markReady(room);
+    for (const e of members) {
+      const inRoom = this.roomOf(e.session) === room;
+      try {
+        sendSession(e.session, { t: 'queue.matched', code: room.code, difficulty: room.difficulty, seated: inRoom });
+      } catch (err) { this.log.error('[queue] queue.matched send failed', err); }
+    }
+    this.log.info(`[queue] ${room.code} started with ${members.length} queued player(s) (${room.difficulty})`);
+    void rest;
+  }
+
+  // ---------------------------------------------------------------------------------------------------
   // room.* handlers
   // ---------------------------------------------------------------------------------------------------
 
-  create(session, { mode, difficulty }) {
+  create(session, { mode, difficulty, capacity }) {
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
@@ -680,7 +1036,7 @@ export class Lobby {
     const code = this.genCode();
     if (!code) return fail(ERR.INTERNAL, 'no room code available');
     if (cur) this.removeMember(cur, session.playerId);
-    const room = new Room(code, mode, difficulty, this.now());
+    const room = new Room(code, mode, difficulty, this.now(), capacity);
     room.content = this.vanilla;
     // the server owner's default plugins (plugins/config.json `default`; header "Gameplay plugins"): none — the original game
     const defaults = this.plugins?.defaults?.() || [];
@@ -696,7 +1052,7 @@ export class Lobby {
     session.roomCode = code;
     session.notice = null;
     session.pendingResult = null;
-    this.log.info(`[lobby] ${code} created (${mode}/${difficulty}) by ${session.name}`);
+    this.log.info(`[lobby] ${code} created (${mode}/${difficulty}${mode === 'solo' ? '' : `, ${room.capacity} seats`}) by ${session.name}`);
     this.broadcastState(room);
     return OK;
   }
@@ -711,8 +1067,22 @@ export class Lobby {
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (room.match) return fail(ERR.ROOM_STARTED);
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo room');
+    return this.placePlayer(room, session, cur);
+  }
+
+  /**
+   * Seat a human in a co-op room's lowest free seat (room.join, and the 匹配 hand-off). Leaves the room it is currently in
+   * (`cur`) first, announces the new room state, and never throws.
+   * @param {Room} room @param {any} session @param {Room | null} [cur] the session's current room, when it has one
+   * @returns {typeof OK | { error: string, detail?: string }}
+   */
+  placePlayer(room, session, cur = null) {
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo room');
     const idx = room.freeSeat();
     if (idx < 0) return fail(ERR.ROOM_FULL);
+    // Always through removeMember — even when the session is already in THIS room as a SPECTATOR: that is what frees the
+    // spectator seat before the player seat is taken (a spectator going on as a player, header).
     if (cur) this.removeMember(cur, session.playerId);
     room.seats[idx] = this.humanSeat(idx, session);
     session.roomCode = room.code;
@@ -804,6 +1174,22 @@ export class Lobby {
       for (const s of room.seats) if (s && !s.isBot && s.playerId !== room.hostId) s.ready = false;
       this.broadcastState(room);
     }
+    return OK;
+  }
+
+  /** room.setCapacity (host, LOBBY, co-op): resize the room, never below its occupied seats (header). */
+  setCapacity(session, { capacity }) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
+    if (room.match) return fail(ERR.ROOM_STARTED);
+    if (room.mode === 'solo') return fail(ERR.BAD_TARGET, 'a solo room has one seat');
+    if (!Number.isInteger(capacity) || capacity < DEFAULT_SEATS || capacity > MAX_SEATS) return fail(ERR.BAD_MSG, 'bad capacity');
+    this.dropReplay(room, session.playerId);
+    if (capacity === room.seats.length) return OK;
+    if (capacity < room.seats.filter(Boolean).length) return fail(ERR.BAD_TARGET, 'fewer seats than its members');
+    room.resize(capacity);
+    this.broadcastState(room);
     return OK;
   }
 
@@ -1263,7 +1649,7 @@ export class Lobby {
     });
     // lastPublic / results: the latest m.public broadcast and the m.result frames (encoded), kept for the replay.
     const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null, results: new Map() };
-    let seed = 0;
+    let seed;
     try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
     const modded = room.modded;
     try {
@@ -1587,6 +1973,8 @@ export class Lobby {
   removeMember(room, playerId) {
     const session = this.registry.byId(playerId);
     if (session && session.roomCode === room.code) session.roomCode = null;
+    // 匹配: entering a room (or leaving one) takes the session out of the queue
+    if (session && this.queued(session)) { this.queueLeave(session); this.broadcastQueue(); }
     this.clearGrace(playerId);
     this.dropReplay(room, playerId);
     if (this.freeSpectatorSeat(room, playerId)) return;

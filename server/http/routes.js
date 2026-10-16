@@ -57,6 +57,9 @@ export function healthReport({ startedAt, network, registry, lobby, content = nu
     // it has, when it has some (a page's title screen says so; P1a)
     ...(content ? { content: { vanilla: content.cs, sets: contentSets(lobby), ...pluginCount(lobby) } } : {}),
     sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
+    // 在线人数: the counters the client shows next to the version (title footer / lobby top bar, the `presence` frame) —
+    // a page that has no session (the title screen) reads them from here (public/js/ui/presence.js fetchPresence)
+    ...lobby.presence(),
   };
   if (trusted && Object.keys(trusted).length) report.plugins = trusted;
   if (withTraffic && traffic) report.traffic = traffic.snapshot();

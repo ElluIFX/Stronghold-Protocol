@@ -1,7 +1,7 @@
 // Lobby screen: pick 独立模拟 / 同盟模拟 and a difficulty (标准/险境/绝境/终极), create a room,
 // or join one with a 同盟密钥 (recent codes remembered) — as a player (加入同盟) or in one of its MAX_SPECTATORS
 // spectator seats (观战: room.spectate, also while its match runs; community report #26, a remake feature — the
-// official room has none). Shows connection status + ping.
+// official room has none). Shows connection status, ping and server presence.
 //
 // Difficulty descriptions come from data/config.json `modes[modeId]` when present, else from the
 // official act2autochess `modeDataDict` texts embedded below (desc + effectDescList), so the
@@ -11,20 +11,22 @@
 // Texts go through t() (docs/I18N.md); the module-level tables hold msgids (N_) translated where they are shown, the
 // config.json mode texts come localized from data.js.
 
-import { ResumeMatchButton } from '../ui/resumeMatch.js';
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, DEFAULT_SEATS, MAX_SPECTATORS, ERR, modeIdFor } from '../../../shared/constants.js';
+import {
+  html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo,
+} from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
+import { ResourceButton } from '../ui/resourceButton.js';
 import { openStats } from './stats.js';
 import { SettingsButton } from '../ui/settings.js';
-import { PwaInstallButton } from '../ui/device.js';
 import { LoadoutButton } from './loadout.js';
 import { net, identity } from '../net.js';
 import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
 import { getConfig, getMode, getStage, useData } from '../data.js';
-import { t, tc, N_ } from '../../../shared/i18n.js';
+import { t, tc, tParts, N_ } from '../../../shared/i18n.js';
+import { presenceLabel, presenceHint, usePresencePoll } from '../ui/presence.js';
 
 /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
 export const MODE_TEXT = {
@@ -83,8 +85,11 @@ const MODE_CARDS = [
   },
   {
     id: 'coop', name: N_('同盟模拟'), en: 'ALLIANCE SIMULATION', icon: 'users',
+    // up to MAX_SEATS (8) doctors: a room has DEFAULT_SEATS (4, the official room) until its host adds seats in the room
+    // (同盟席位, a remake extension)
     desc: N_('与至多 {n} 名博士组成同盟，共享干员池，联防协作抵御敌潮。'), params: { n: MAX_SEATS - 1 },
-    points: [N_('1–{n} 名博士 · 可由 AI 队友补位'), N_('联防阶段 · 最终攻势合并生命值')], pointParams: { n: MAX_SEATS },
+    points: [N_('1–{n} 名博士 · 可由 AI 队友补位'), N_('默认 {d} 席 · 创建者可扩至 {n} 席'), N_('联防阶段 · 最终攻势合并生命值')],
+    pointParams: { n: MAX_SEATS, d: DEFAULT_SEATS },
   },
 ];
 
@@ -178,6 +183,28 @@ const FALLBACK_TIPS = [
 ];
 const TIP_ROTATE_MS = 5000; // matchingTipRotateInterval
 
+/**
+ * 匹配 (matchmaking) panel: shown in place of the 快速匹配 button while the player waits. The server groups the waiting
+ * players of one difficulty into a fresh 同盟 room and answers queue.matched; the missed seats become AI teammates once
+ * the room opens (screens/room.js).
+ */
+function QueuePanel({ q, difficulty, onCancel, busy }) {
+  const secs = Math.max(0, Math.round((q.waitedMs || 0) / 1000));
+  const need = Math.max(1, (q.minSeats || 2) - (q.count || 1));
+  return html`<div class="queue-panel brackets" role="status" aria-live="polite">
+    <div class="queue-panel__head">
+      <${Spinner} size="sm" />
+      <span class="queue-panel__title">${t('正在匹配 · {difficulty}', { difficulty: DIFFICULTY_NAMES[difficulty] ? t(DIFFICULTY_NAMES[difficulty]) : difficulty })}</span>
+      <span class="queue-panel__time num">${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}</span>
+    </div>
+    <div class="queue-panel__body">
+      <span>${tParts('{n} 人在等待', { n: html`<b class="num">${q.count || 1}</b>` })}</span>
+      <span class="t-dim">${need > 0 ? t('再等 {need} 人即可开始', { need }) : t('即将开始')}</span>
+      <${Button} variant="ghost" size="sm" data-testid="queue-cancel" onClick=${onCancel} loading=${busy === 'unqueue'}>${t('取消匹配')}<//>
+    </div>
+  </div>`;
+}
+
 /** Rotating tactical tips (config.json `tips`, weighted list of { tip, weight }). */
 function TipsPanel() {
   const cfg = getConfig();
@@ -242,12 +269,17 @@ function DifficultyCard({ roomMode, difficulty, selected, onSelect }) {
 /** Lobby screen component. */
 export function LobbyScreen() {
   const me = useStore((s) => s.me, shallowEqual);
+  const displayName = me.name;
   const conn = useStore((s) => s.connection, shallowEqual);
+  const queue = useStore((s) => s.queue, shallowEqual);
+  // Presence is pushed to sessions; the title screen can read it before identifying.
+  const presence = useStore((s) => s.presence, shallowEqual);
+  usePresencePoll();
   useData('config');
-  const [roomMode, setRoomMode] = useState(() => (loadPref('lobby.mode', 'coop') === 'solo' ? 'solo' : 'coop'));
+  const [roomMode, setRoomMode] = useState(() => loadPref('lobby.mode', 'coop') === 'solo' ? 'solo' : 'coop');
   const [difficulty, setDifficulty] = useState(() => {
-    const d = loadPref('lobby.difficulty', 'FUNNY');
-    return DIFFICULTIES.includes(d) ? d : 'FUNNY';
+    const saved = loadPref('lobby.difficulty', 'FUNNY');
+    return DIFFICULTIES.includes(saved) ? saved : 'FUNNY';
   });
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(null);
@@ -256,15 +288,14 @@ export function LobbyScreen() {
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
 
-  const online = conn.status === 'online';
+  const ready = conn.status === 'online';
   const codeOk = CODE_RE.test(code);
-
-  const pickMode = (m) => { setRoomMode(m); savePref('lobby.mode', m); };
-  const pickDifficulty = (d) => { setDifficulty(d); savePref('lobby.difficulty', d); };
+  const pickMode = (value) => { setRoomMode(value); savePref('lobby.mode', value); };
+  const pickDifficulty = (value) => { setDifficulty(value); savePref('lobby.difficulty', value); };
 
   const run = async (kind, fn) => {
     if (inFlight.current) return;
-    if (!online) { toast(t('尚未连接到服务器，请稍候'), 'warn'); return; }
+    if (!ready) { toast(t('尚未连接到服务器，请稍候'), 'warn'); return; }
     inFlight.current = true;
     setBusy(kind);
     try { await fn(); } catch (err) { toastError(err); } finally {
@@ -273,6 +304,10 @@ export function LobbyScreen() {
     }
   };
   const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
+  // 匹配 (matchmaking queue): wait for other players of the same difficulty instead of hand-sharing a key. The ticker the
+  // panel shows is driven by the server's queue.status frames (store.queue), so it survives a reconnect.
+  const queueJoin = () => run('queue', () => net.request('queue.join', { difficulty }));
+  const queueLeave = () => run('unqueue', () => net.request('queue.leave', {}));
   const join = (c = code) => {
     // `onClick=${join}` hands the click EVENT as the first argument, and a default parameter only applies to
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field
@@ -308,12 +343,13 @@ export function LobbyScreen() {
     <header class="topbar">
       <div class="topbar__left">
         <${Button} variant="ghost" size="sm" icon="chevronLeft" onClick=${backToTitle} title=${t('返回标题')}>${t('返回')}<//>
-        <${PingPill} ms=${conn.ping} online=${online} />
+        <${PingPill} ms=${conn.ping} online=${ready} />
+        <span class="presence num" data-testid="lobby-presence" title=${presenceHint()}>${presenceLabel(presence)}</span>
         <span class="topbar__sep" aria-hidden="true"></span>
         <div class="topbar__tools">
           <${SettingsButton} class="lobby-settings" variant="secondary" square=${true} />
           <${GuideButton} class="lobby-guide" variant="secondary" square=${true} />
-          <${PwaInstallButton} class="lobby-pwa" square=${true} />
+          <${ResourceButton} class="lobby-res" variant="secondary" square=${true} />
         </div>
       </div>
       <div class="topbar__center">
@@ -321,16 +357,15 @@ export function LobbyScreen() {
         <h1 class="topbar__title">${t('选择模拟协议')}</h1>
       </div>
       <div class="topbar__right">
-        <${ResumeMatchButton} />
         <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" label=${t('干员调配')} />
         <button type="button" class="me-chip me-chip--btn stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>
-          <${AvatarFrame} size="sm" name=${me.name} seat=${0} self=${true} />
-          <span class="me-chip__text">
-            <span class="me-chip__name">${me.name || t('博士')}</span>
-            <${MicroLabel}>${me.playerId != null ? `DOCTOR #${doctorNo(me.playerId)}` : 'DOCTOR'}<//>
-          </span>
-          <${Icon} name="chart" class="me-chip__stats" />
-        </button>
+              <${AvatarFrame} size="sm" name=${displayName} seat=${0} self=${true} />
+              <span class="me-chip__text">
+                <span class="me-chip__name" title=${displayName || t('博士')}>${displayName || t('博士')}</span>
+                <${MicroLabel}>${me.playerId == null ? 'DOCTOR' : `DOCTOR #${doctorNo(me.playerId)}`}<//>
+              </span>
+              <${Icon} name="chart" class="me-chip__stats" />
+            </button>
       </div>
     </header>
 
@@ -345,10 +380,10 @@ export function LobbyScreen() {
         <${Panel} class="join-panel" tone="amber">
           <div class="join-row">
             <${TextField} size="code" icon="key" value=${code} placeholder=${t('输入同盟密钥 / 粘贴邀请链接')}
-              transform=${normalizeCode} onInput=${(v) => setCode(normalizeCode(v))} onEnter=${() => join()} />
-            <${Button} variant="amber" size="lg" icon="users" loading=${busy === 'join'} disabled=${!codeOk || !online} onClick=${() => join()}>${t('加入同盟')}<//>
+              autoCapitalize="characters" enterKeyHint="go" transform=${normalizeCode} onInput=${(v) => setCode(normalizeCode(v))} onEnter=${() => join()} />
+            <${Button} variant="amber" size="lg" icon="users" loading=${busy === 'join'} disabled=${!codeOk || !ready} onClick=${() => join()}>${t('加入同盟')}<//>
             <${Tooltip} text=${t('以观战者身份进入：不占博士席位，只能观看（每个同盟最多 {MAX_SPECTATORS} 名，模拟进行中也可进入）', { MAX_SPECTATORS })}>
-              <${Button} variant="secondary" size="lg" icon="eye" class="join-spectate" loading=${busy === 'spectate'} disabled=${!codeOk || !online} onClick=${spectate}>${t('观战')}<//>
+              <${Button} variant="secondary" size="lg" icon="eye" class="join-spectate" loading=${busy === 'spectate'} disabled=${!codeOk || !ready} onClick=${spectate}>${t('观战')}<//>
             <//>
           </div>
           <div class="join-foot">
@@ -367,15 +402,28 @@ export function LobbyScreen() {
           ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${roomMode} difficulty=${d} selected=${difficulty === d} onSelect=${pickDifficulty} />`)}
         </div>
         <div class="create-box">
-          <${Tooltip} block=${true} text=${online ? null : t('正在连接服务器…')}>
-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
-              ${roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
-            <//>
-          <//>
+          ${queue.waiting
+            ? html`<${QueuePanel} q=${queue} difficulty=${queue.difficulty || difficulty} busy=${busy} onCancel=${queueLeave} />`
+            : html`<div class="create-box__row">
+                <${Tooltip} block=${true} text=${ready ? null : t('正在连接服务器…')}>
+                  <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!ready} onClick=${create}>
+                    ${roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
+                  <//>
+                <//>
+                ${roomMode === 'coop'
+                  ? html`<${Tooltip} block=${true} text=${ready ? t('自动寻找同一难度的博士，凑齐后自动进入同盟房间；缺人的席位会用 AI 队友补齐') : t('正在连接服务器…')}>
+                      <${Button} variant="secondary" size="lg" block=${true} icon="users" data-testid="queue-join" loading=${busy === 'queue'} disabled=${!ready} onClick=${queueJoin}>
+                        ${t('快速匹配（{difficulty}）', { difficulty: t(DIFFICULTY_NAMES[difficulty]) })}
+                      <//>
+                    <//>`
+                  : null}
+              </div>`}
           <div class="create-box__hint">
-            ${online
-              ? html`<span>${roomMode === 'solo' ? t('创建后即可开始模拟') : t('创建后可邀请好友或添加 AI 队友')}</span>`
-              : html`<${Spinner} size="sm" label="CONNECTING" />`}
+            ${!queue.waiting && !ready
+              ? html`<${Spinner} size="sm" label="CONNECTING" />`
+              : html`<span>${queue.waiting
+                    ? t('匹配期间可以点「取消匹配」退出队列')
+                    : roomMode === 'solo' ? t('创建后即可开始模拟') : t('创建后可邀请好友或添加 AI 队友')}</span>`}
           </div>
         </div>
       </section>
