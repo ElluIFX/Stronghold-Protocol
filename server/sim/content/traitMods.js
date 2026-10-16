@@ -100,6 +100,9 @@ const KIT_OWNED = [
   /拥有已储存的攻击能量时/,            // MSC-Y — 黑键 / 维伊 (自选 picks; ops/op-ebnhlz.js, ops/op-veen.js)
 ];
 
+// Oblvns LOR-Y uses the skill-off range; her kit evaluates that condition on baseRangeKeys.
+const KIT_OWNED_CHARS = new Set(['char_4182_oblvns']);
+
 /**
  * Lines that only ever apply in another game mode — 集成战略 (ISW modules, e.g. 水月 ISW-A `attack_speed: 50`). This
  * mode is 卫戍协议, and the rest of the repo already ignores their mode-gated halves (shared/loadoutRecord.js
@@ -176,6 +179,7 @@ export function traitAttackSpeedRule(def) {
   for (const text of traitClauses(def)) {
     const clause = conditionClause(text);
     if (!clause) continue;
+    if (KIT_OWNED_CHARS.has(def?.charId)) return { value, condition: null, clause, source: text, reason: 'kit' };
     for (const match of CONDITIONS) {
       const condition = match(clause);
       if (condition) return { value, condition, clause, source: text, reason: 'ok' };

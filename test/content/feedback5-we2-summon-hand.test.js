@@ -35,6 +35,7 @@ function official(charId, mod, stage) {
     case 'char_179_cgbird': return 3;                                                      // PRTS 幻影 备注
     case 'char_2027_wang': return mod === 'uniequip_002_wang' ? 8 : 7;                     // 7 at full potential, TRP-X +1
     case 'char_4048_doroth': return 9;                                                     // 10 / 13, the hand's 9 cap
+    case 'char_4123_ela': return 4;                                                        // 雷鸣地雷: at most four held
     default: return 1;
   }
 }
